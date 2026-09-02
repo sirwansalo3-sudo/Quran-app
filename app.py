@@ -1,7 +1,6 @@
 import streamlit as st
 import sqlite3
 import pandas as pd
-from weasyprint import HTML
 
 # 1. بنکەی دراوە (Database)
 def get_db_connection():
@@ -26,12 +25,11 @@ def init_db():
 
 init_db()
 
-# 2. ڕێکخستنی شێواز و ڕەنگەکان (CSS) بۆ دیاربوونی هەموو خانەکان
+# 2. ڕێکخستنی شێواز و ڕەنگەکان (CSS)
 st.set_page_config(page_title="سیستەمی بنکەی قورئان", layout="wide")
 
 st.markdown("""
     <style>
-    /* چارەسەری ڕەشبوونی خانەکان و ڕوونبوونی نووسینەکان */
     html, body, [class*="css"], div, input, label, select, textarea {
         direction: RTL !important;
         text-align: right !important;
@@ -47,7 +45,6 @@ st.markdown("""
         border: 1px solid #cccccc !important;
         border-radius: 6px !important;
     }
-    /* چاککردنی خشتەکان */
     [data-testid="stDataFrame"] {
         background-color: #ffffff !important;
         color: #000000 !important;
@@ -123,49 +120,6 @@ def change_password_section():
             conn.close()
             st.success("پاسۆورد بە سەرکەوتوویی گۆڕدرا!")
 
-def generate_student_card_pdf(student_info, grades):
-    rows_html = ""
-    for g in grades:
-        total = g['daily_score'] + g['exam_score']
-        rows_html += f"""
-        <tr>
-            <td>{g['subject_name']}</td>
-            <td>وەرزی {g['term']}</td>
-            <td>{g['daily_score']}</td>
-            <td>{g['exam_score']}</td>
-            <td><strong>{total}</strong></td>
-        </tr>
-        """
-
-    html_content = f"""
-    <!DOCTYPE html>
-    <html dir="rtl" lang="ckb">
-    <head>
-        <meta charset="utf-8">
-        <style>
-            body {{ font-family: 'Segoe UI', Tahoma, sans-serif; margin: 0; padding: 20px; color: #2c3e50; }}
-            .header {{ text-align: center; border-bottom: 2px solid #2e7d32; padding-bottom: 10px; }}
-            .info-box {{ background-color: #f1f8e9; padding: 10px; margin: 15px 0; border-radius: 5px; }}
-            table {{ width: 100%; border-collapse: collapse; margin-top: 10px; }}
-            th, td {{ border: 1px solid #ddd; padding: 8px; text-align: center; }}
-            th {{ background-color: #2e7d32; color: white; }}
-        </style>
-    </head>
-    <body>
-        <div class="header"><h1>📖 کارتی نمرەی قوتابی - بنکەی قورئان</h1></div>
-        <div class="info-box">
-            <p><strong>ناوی قوتابی:</strong> {student_info['full_name']} | <strong>کۆد:</strong> {student_info['student_code']}</p>
-            <p><strong>پۆل:</strong> {student_info['class_num']} | <strong>ئاست:</strong> {student_info['level_type']}</p>
-        </div>
-        <table>
-            <thead><tr><th>بابەت</th><th>وەرز</th><th>ڕۆژانە</th><th>تاقیکردنەوە</th><th>کۆی نمرە</th></tr></thead>
-            <tbody>{rows_html if rows_html else '<tr><td colspan="5">هیچ نمرەیەک نییە</td></tr>'}</tbody>
-        </table>
-    </body>
-    </html>
-    """
-    return HTML(string=html_content).write_pdf()
-
 # 4. دەستەی بەڕێوەبەر (Admin)
 def admin_dashboard():
     st.title(f"👑 بەخێربێیت بەڕێوەبەر")
@@ -179,7 +133,7 @@ def admin_dashboard():
         "تۆمارکردنی مامۆستا و دیاریکردنی پۆل", 
         "دەستکاریکردنی نمرەی قوتابیان", 
         "تۆمارکردنی نمرەی مامۆستا", 
-        "پرێنتکردنی کارتی قوتابی", 
+        "بینین و کۆپیکردنی کارتی قوتابی", 
         "گۆڕینی وشەی نهێنی"
     ]
     choice = st.sidebar.selectbox("بەشەکان", menu)
@@ -230,7 +184,7 @@ def admin_dashboard():
                         added_count += 1
                         current_code += 1
                     except:
-                        current_code += 1 # پەڕاندن لە کاتی هەبوونی کۆدی دووبارە
+                        current_code += 1
                 conn.commit()
                 st.success(f"بە سەرکەوتوویی ({added_count}) قوتابی تۆمارکران!")
             else:
@@ -289,19 +243,20 @@ def admin_dashboard():
                 conn.commit()
                 st.success("تۆمارکرا!")
 
-    elif choice == "پرێنتکردنی کارتی قوتابی":
-        st.subheader("🖨️ پرێنت و داگرتنی PDF")
+    elif choice == "بینین و کۆپیکردنی کارتی قوتابی":
+        st.subheader("📄 کارتی نمرەی قوتابی")
         c.execute("SELECT * FROM students")
         students = c.fetchall()
         if students:
             st_dict = {f"{s['full_name']} (پۆلی {s['class_num']})": s for s in students}
             selected_st_name = st.selectbox("قوتابی هەڵبژێرە", list(st_dict.keys()))
             st_data = st_dict[selected_st_name]
-            c.execute("SELECT * FROM grades WHERE student_code=?", (st_data['student_code'],))
-            st_grades = c.fetchall()
-
-            pdf_data = generate_student_card_pdf(st_data, st_grades)
-            st.download_button("📥 داگرتنی کارتی قوتابی (PDF)", data=pdf_data, file_name=f"card_{st_data['student_code']}.pdf", mime="application/pdf")
+            
+            df_grades = pd.read_sql_query("SELECT subject_name as 'بابەت', term as 'وەرز', daily_score as 'ڕۆژانە', exam_score as 'تاقیکردنەوە', (daily_score + exam_score) as 'کۆی نمرە' FROM grades WHERE student_code=?", conn, params=(st_data['student_code'],))
+            
+            st.markdown(f"### 👨‍🎓 ناوی قوتابی: {st_data['full_name']}")
+            st.write(f"**کۆدی قوتابی:** {st_data['student_code']} | **پۆل:** {st_data['class_num']}")
+            st.dataframe(df_grades, use_container_width=True)
 
     elif choice == "گۆڕینی وشەی نهێنی":
         change_password_section()
