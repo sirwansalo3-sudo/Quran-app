@@ -4,10 +4,8 @@ import pandas as pd
 from datetime import datetime
 
 # 1. بنکەی دراوە (Database Setup)
-DB_NAME = 'quran_center_web.db'  # ناوی فایلی داتابەیس جێگیرە تا داتاکان ڕەش نەبنەوە
-
 def get_db_connection():
-    conn = sqlite3.connect(DB_NAME)
+    conn = sqlite3.connect('quran_center_web.db')
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -205,7 +203,7 @@ def admin_dashboard():
         "📂 قوتابیان بەپێی ژوورەکان (1-20)",
         "📝 تۆمارکردنی نمرەی ڕۆژانە",
         "⚙️ بەڕێوەبردنی وانەکان",
-        "👨‍🏫 تۆمارکردن و لیستی مامۆستایان", 
+        "👨‍🏫 تۆمارکردن و دەستکاریکردنی مامۆستایان", 
         "📅 تۆمارکردنی غیابات و ڕاپۆرت",
         "💯 نمرەی تاقیکردنەوە (30)", 
         "📄 کارتی A4 و ڕاپۆرت"
@@ -244,7 +242,7 @@ def admin_dashboard():
 
     elif choice == "👨‍🎓 بەڕێوەبردن و لیستی قوتابیان":
         st.subheader("👨‍🎓 بەڕێوەبردنی قوتابیان")
-        tab_st1, tab_st2, tab_st3 = st.tabs(["📜 لیستی هەموو قوتابیان", "➕ تۆمارکردنی یەک قوتابی", "📋 تۆمارکردنی بەکۆمەڵ (Paste)"])
+        tab_st1, tab_st2, tab_st3, tab_st4 = st.tabs(["📜 لیستی قوتابیان", "✏️ دەستکاریکردنی قوتابی", "➕ تۆمارکردنی یەک قوتابی", "📋 تۆمارکردنی بەکۆمەڵ"])
 
         with tab_st1:
             st.write("### 📜 لیستی گشتی قوتابیە تۆمارکراوەکان")
@@ -259,8 +257,41 @@ def admin_dashboard():
                 st.info("هیچ قوتابییەک تا ئێستا تۆمار نەکراوە.")
 
         with tab_st2:
-            st.write("### ➕ تۆمارکردنی قوتابیی نوێ")
+            st.write("### ✏️ دەستکاریکردن یان سڕینەوەی زانیارییەکانی قوتابی")
+            c.execute("SELECT student_code, full_name, class_num, phone, address FROM students")
+            st_list = c.fetchall()
             
+            if st_list:
+                st_dict = {f"{r['full_name']} (کۆد: {r['student_code']})": r for r in st_list}
+                sel_edit = st.selectbox("قوتابی هەڵبژێرە بۆ دەستکاریکردن:", list(st_dict.keys()))
+                edit_st = st_dict[sel_edit]
+
+                st.info(f"دەستکاریکردنی زانیارییەکانی قوتابی: {edit_st['full_name']}")
+                new_name = st.text_input("ناوی تەواوی قوتابی", value=edit_st['full_name'])
+                
+                ce1, ce2, ce3 = st.columns(3)
+                new_cls = ce1.number_input("ژوور (1 تا 20)", min_value=1, max_value=20, value=int(edit_st['class_num']))
+                new_phone = ce2.text_input("ژمارەی مۆبایل", value=edit_st['phone'] if edit_st['phone'] else "")
+                new_addr = ce3.text_input("شوێنی دانیشتن", value=edit_st['address'] if edit_st['address'] else "")
+
+                col_btn1, col_btn2 = st.columns(2)
+                if col_btn1.button("💾 چاککردن و پاشەکەوتکردن"):
+                    c.execute("UPDATE students SET full_name=?, class_num=?, phone=?, address=? WHERE student_code=?", 
+                              (new_name, new_cls, new_phone, new_addr, edit_st['student_code']))
+                    conn.commit()
+                    st.success("زانیارییەکانی قوتابی بە سەرکەوتوویی دەستکاری کران!")
+                    st.rerun()
+
+                if col_btn2.button("🗑️ سڕینەوەی ئەم قوتابییە"):
+                    c.execute("DELETE FROM students WHERE student_code=?", (edit_st['student_code'],))
+                    conn.commit()
+                    st.warning(f"قوتابی ({edit_st['full_name']}) سڕایەوە!")
+                    st.rerun()
+            else:
+                st.info("هیچ قوتابییەک بۆ دەستکاریکردن نەدۆزرایەوە.")
+
+        with tab_st3:
+            st.write("### ➕ تۆمارکردنی قوتابیی نوێ")
             if "auto_code" not in st.session_state:
                 st.session_state.auto_code = ""
 
@@ -282,12 +313,12 @@ def admin_dashboard():
                     generate_next_code()
                     st.rerun()
 
-            name = st.text_input("ناوی تەواوی قوتابی")
+            name = st.text_input("ناوی تەواوی قوتابی", key="add_name")
             
             c3, c4, c5 = st.columns(3)
-            cls = c3.number_input("ژوور (1 تا 20)", min_value=1, max_value=20, step=1)
-            phone = c4.text_input("ژمارەی مۆبایل")
-            address = c5.text_input("شوێنی دانیشتن (ناونیشان)")
+            cls = c3.number_input("ژوور (1 تا 20)", min_value=1, max_value=20, step=1, key="add_cls")
+            phone = c4.text_input("ژمارەی مۆبایل", key="add_phone")
+            address = c5.text_input("شوێنی دانیشتن (ناونیشان)", key="add_addr")
 
             if st.button("💾 پاشەکەوتکردنی قوتابی"):
                 if code and name:
@@ -302,7 +333,7 @@ def admin_dashboard():
                 else:
                     st.error("تکایە بەلایەنی کەمەوە ناو و کۆد بنووسە.")
 
-        with tab_st3:
+        with tab_st4:
             st.write("### 📋 تۆمارکردنی بەکۆمەڵ")
             cls_bulk = st.number_input("ژوور (1 تا 20)", min_value=1, max_value=20, step=1, key="bulk_cls")
             start_code = st.number_input("کۆدی دەستپێک", min_value=1, value=100)
@@ -393,17 +424,82 @@ def admin_dashboard():
             conn.commit()
             st.rerun()
 
-    elif choice == "👨‍🏫 تۆمارکردن و لیستی مامۆستایان":
+    elif choice == "👨‍🏫 تۆمارکردن و دەستکاریکردنی مامۆستایان":
         st.subheader("👨‍🏫 بەڕێوەبردنی مامۆستایان")
         
-        tab_t1, tab_t2 = st.tabs(["➕ تۆمارکردنی مامۆستای نوێ", "📜 لیستی مامۆستا تۆمارکراوەکان"])
+        tab_t1, tab_t2, tab_t3 = st.tabs(["📜 لیستی مامۆستایان", "✏️ دەستکاریکردنی مامۆستا", "➕ تۆمارکردنی مامۆستای نوێ"])
         
         with tab_t1:
+            st.write("### 📜 لیستی هەموو مامۆستایان")
+            query_t = """
+                SELECT teacher_code as 'کۆد', full_name as 'ناوی تەواو', username as 'ناوی بەکارهێنەر', assigned_subjects as 'ژوور و وانەکان'
+                FROM teachers
+            """
+            df_teachers = pd.read_sql_query(query_t, conn)
+            if not df_teachers.empty:
+                st.dataframe(df_teachers, use_container_width=True)
+            else:
+                st.info("هیچ مامۆستایەک تا ئێستا تۆمار نەکراوە.")
+
+        with tab_t2:
+            st.write("### ✏️ دەستکاریکردنی زانیاریی مامۆستا (ناو، ژوور و وانەکان)")
+            c.execute("SELECT * FROM teachers")
+            t_rows = c.fetchall()
+            if t_rows:
+                t_dict = {f"{r['full_name']} (کۆد: {r['teacher_code']})": r for r in t_rows}
+                sel_t_edit = st.selectbox("مامۆستا هەڵبژێرە:", list(t_dict.keys()))
+                e_teacher = t_dict[sel_t_edit]
+
+                t_name_edit = st.text_input("ناوی تەواوی مامۆستا", value=e_teacher['full_name'])
+                t_user_edit = st.text_input("ناوی بەکارهێنەر (Username)", value=e_teacher['username'])
+                t_pass_edit = st.text_input("وشەی نهێنی نوێ", value=e_teacher['password'])
+
+                all_subs = get_all_subjects()
+                
+                # Parsing existing assignment
+                parsed_t = []
+                if e_teacher['assigned_subjects']:
+                    for item in e_teacher['assigned_subjects'].split('|'):
+                        if ':' in item:
+                            cs, ss = item.split(':')
+                            parsed_t.append((int(cs.strip()), ss.strip()))
+
+                c_cls1 = parsed_t[0][0] if len(parsed_t) > 0 else 1
+                c_sub1 = parsed_t[0][1] if len(parsed_t) > 0 and parsed_t[0][1] in all_subs else all_subs[0]
+                c_cls2 = parsed_t[1][0] if len(parsed_t) > 1 else 1
+                c_sub2 = parsed_t[1][1] if len(parsed_t) > 1 and parsed_t[1][1] in all_subs else all_subs[0]
+
+                ce_col1, ce_col2 = st.columns(2)
+                edit_cls1 = ce_col1.number_input("ژووری یەکەم", min_value=1, max_value=20, value=c_cls1, key="e_cls1")
+                edit_sub1 = ce_col1.selectbox("وانەی یەکەم", all_subs, index=all_subs.index(c_sub1) if c_sub1 in all_subs else 0, key="e_sub1")
+
+                edit_cls2 = ce_col2.number_input("ژووری دووەم", min_value=1, max_value=20, value=c_cls2, key="e_cls2")
+                edit_sub2 = ce_col2.selectbox("وانەی دووەم", all_subs, index=all_subs.index(c_sub2) if c_sub2 in all_subs else 0, key="e_sub2")
+
+                btn_e1, btn_e2 = st.columns(2)
+                if btn_e1.button("💾 پاشەکەوتکردنی گۆڕانکارییەکان"):
+                    sub_str_new = f"{edit_cls1}:{edit_sub1}|{edit_cls2}:{edit_sub2}"
+                    c.execute("""UPDATE teachers SET full_name=?, username=?, password=?, assigned_classes=?, assigned_subjects=? 
+                                 WHERE teacher_code=?""", 
+                              (t_name_edit, t_user_edit, t_pass_edit, f"{edit_cls1},{edit_cls2}", sub_str_new, e_teacher['teacher_code']))
+                    conn.commit()
+                    st.success("زانیارییەکانی مامۆستا دەستکاری کران!")
+                    st.rerun()
+
+                if btn_e2.button("🗑️ سڕینەوەی ئەم مامۆستایە"):
+                    c.execute("DELETE FROM teachers WHERE teacher_code=?", (e_teacher['teacher_code'],))
+                    conn.commit()
+                    st.warning("مامۆستاکە سڕایەوە!")
+                    st.rerun()
+            else:
+                st.info("هیچ مامۆستایەک نییە بۆ دەستکاریکردن.")
+
+        with tab_t3:
             c1, c2 = st.columns(2)
             code = c1.text_input("کۆدی مامۆستا")
             name = c2.text_input("ناوی تەواو")
-            uname = c1.text_input("ناوی بەکارهێنەر (Username)")
-            pwd = c2.text_input("وشەی نهێنی (Password)", type="password")
+            uname = c1.text_input("ناوی بەکارهێنەر (Username)", key="new_u")
+            pwd = c2.text_input("وشەی نهێنی (Password)", type="password", key="new_p")
 
             all_subs = get_all_subjects()
             cls1 = c1.number_input("ژووری یەکەم", min_value=1, max_value=20)
@@ -422,18 +518,6 @@ def admin_dashboard():
                     st.rerun()
                 else:
                     st.error("تکایە هەموو بڕگەکان پڕبکەرەوە.")
-                    
-        with tab_t2:
-            st.write("### 📜 لیستی هەموو مامۆستایان")
-            query_t = """
-                SELECT teacher_code as 'کۆد', full_name as 'ناوی تەواو', username as 'ناوی بەکارهێنەر', assigned_subjects as 'ژوور و وانەکان'
-                FROM teachers
-            """
-            df_teachers = pd.read_sql_query(query_t, conn)
-            if not df_teachers.empty:
-                st.dataframe(df_teachers, use_container_width=True)
-            else:
-                st.info("هیچ مامۆستایەک تا ئێستا تۆمار نەکراوە.")
 
     elif choice == "📅 تۆمارکردنی غیابات و ڕاپۆرت":
         st.subheader("📅 بەڕێوەبردنی ئامادەبوون، غیابات و مۆڵەت")
