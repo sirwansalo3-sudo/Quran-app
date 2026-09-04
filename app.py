@@ -132,29 +132,72 @@ if "logged_in" not in st.session_state:
     st.session_state.role = None
     st.session_state.user_info = None
 
+# زانیاری نمرەی ڕۆژانە بە هەژمارکردنی غیاب و مۆڵەت
+def calculate_daily_20(student_code, subject_name, term, conn):
+    c = conn.cursor()
+    c.execute("SELECT mark, date FROM daily_marks WHERE student_code=? AND subject_name=? AND term=?", (student_code, subject_name, term))
+    marks_records = c.fetchall()
+    
+    if not marks_records:
+        return 0.0
+    
+    valid_marks = []
+    for record in marks_records:
+        m_val = record['mark']
+        m_date = record['date']
+        
+        c.execute("SELECT status FROM attendance WHERE student_code=? AND date=?", (student_code, m_date))
+        att = c.fetchone()
+        
+        if att:
+            status = att['status']
+            if status == "مۆڵەت":
+                continue # مۆڵەت حساب ناکرێت
+            elif status == "نەهاتوو (غیاب)":
+                valid_marks.append(0.0) # غیاب دەبێتە سفر
+            else:
+                valid_marks.append(m_val)
+        else:
+            valid_marks.append(m_val)
+            
+    if not valid_marks:
+        return 0.0
+        
+    avg_mark = sum(valid_marks) / len(valid_marks)
+    return round(avg_mark, 2)
+
 def get_student_grades_df(student_code, conn):
-    query = """
-        SELECT 
-            all_subs.subject_name AS 'وانە / بابەت',
-            all_subs.term AS 'وەرز',
-            ROUND(MIN(20.0, IFNULL(d.daily_sum, 0)), 2) AS 'کۆی ڕۆژانە (20)',
-            IFNULL(e.exam_score, 0) AS 'تاقیکردنەوە (30)',
-            ROUND(MIN(20.0, IFNULL(d.daily_sum, 0)) + IFNULL(e.exam_score, 0), 2) AS 'کۆی گشتی (50)'
-        FROM (
-            SELECT DISTINCT subject_name, term FROM daily_marks WHERE student_code = ?
-            UNION
-            SELECT DISTINCT subject_name, term FROM exam_marks WHERE student_code = ?
-        ) all_subs
-        LEFT JOIN (
-            SELECT subject_name, term, SUM(mark) as daily_sum 
-            FROM daily_marks WHERE student_code = ? GROUP BY subject_name, term
-        ) d ON all_subs.subject_name = d.subject_name AND all_subs.term = d.term
-        LEFT JOIN exam_marks e 
-            ON all_subs.subject_name = e.subject_name 
-            AND all_subs.term = e.term AND e.student_code = ?
-        ORDER BY all_subs.term, all_subs.subject_name
-    """
-    return pd.read_sql_query(query, conn, params=(student_code, student_code, student_code, student_code))
+    c = conn.cursor()
+    c.execute("""
+        SELECT DISTINCT subject_name, term FROM daily_marks WHERE student_code = ?
+        UNION
+        SELECT DISTINCT subject_name, term FROM exam_marks WHERE student_code = ?
+    """, (student_code, student_code))
+    
+    pairs = c.fetchall()
+    data = []
+    
+    for row in pairs:
+        sub = row['subject_name']
+        tm = row['term']
+        
+        daily_20 = calculate_daily_20(student_code, sub, tm, conn)
+        
+        c.execute("SELECT exam_score FROM exam_marks WHERE student_code=? AND subject_name=? AND term=?", (student_code, sub, tm))
+        ex = c.fetchone()
+        exam_30 = ex['exam_score'] if ex else 0.0
+        
+        total_50 = round(daily_20 + exam_30, 2)
+        
+        data.append({
+            'وانە / بابەت': sub,
+            'وەرز': tm,
+            'کۆی ڕۆژانە (20)': daily_20,
+            'تاقیکردنەوە (30)': exam_30,
+            'کۆی گشتی (50)': total_50
+        })
+        
+    return pd.DataFrame(data)
 
 # 3. پەڕەی چوونەژوورەوە
 def login_page():
@@ -213,7 +256,7 @@ def admin_dashboard():
         "📊 داشبۆردی گشتی و گەڕان",
         "👨‍🎓 بەڕێوەبردن و لیستی قوتابیان",
         "📂 قوتابیان بەپێی ژوورەکان (1-20)",
-        "📝 تۆمارکردنی نمرەی ڕۆژانە",
+        "📝 تۆمارکردن و دەستکاریکردنی نمرەی ڕۆژانە",
         "⚙️ بەڕێوەبردنی وانەکان",
         "👨‍🏫 تۆمارکردن و دەستکاریکردنی مامۆستایان", 
         "📅 تۆمارکردنی غیابات و ڕاپۆرت",
@@ -382,9 +425,9 @@ def admin_dashboard():
         else:
             st.info("ئەم ژوورە بەتاڵە.")
 
-    elif choice == "📝 تۆمارکردنی نمرەی ڕۆژانە":
-        st.subheader("📝 تۆمارکردن و بینینی نمرەی ڕۆژانەی قوتابیان")
-        tab1, tab2 = st.tabs(["➕ تۆمارکردنی نمرە", "📜 مێژووی نمرەکان"])
+    elif choice == "📝 تۆمارکردن و دەستکاریکردنی نمرەی ڕۆژانە":
+        st.subheader("📝 تۆمارکردن، بینین و دەستکاریکردنی نمرەی ڕۆژانە")
+        tab1, tab2 = st.tabs(["➕ تۆمارکردنی نمرە", "✏️ مێژوو و دەستکاریکردنی نمرەکان"])
         
         with tab1:
             c.execute("SELECT student_code, full_name, class_num FROM students")
@@ -409,19 +452,38 @@ def admin_dashboard():
                     st.success("نمرەی ڕۆژانە بە سەرکەوتوویی پاشەکەوت کرا!")
 
         with tab2:
-            st.write("### بینینی نمرە تۆمارکراوەکانی قوتابی")
+            st.write("### بینین و چاککردنی نمرە تۆمارکراوەکان")
             c.execute("SELECT student_code, full_name FROM students")
             st_map2 = {f"{r['full_name']} ({r['student_code']})": r['student_code'] for r in c.fetchall()}
             if st_map2:
-                sel_st2 = st.selectbox("قوتابی هەڵبژێرە بۆ بینینی نمرەکانی:", list(st_map2.keys()))
+                sel_st2 = st.selectbox("قوتابی هەڵبژێرە بۆ دەستکاریکردنی نمرەکانی:", list(st_map2.keys()))
                 code_st2 = st_map2[sel_st2]
                 
-                query = """
-                    SELECT date as 'ڕێکەوت', subject_name as 'وانە', term as 'وەرز', mark as 'نمرە'
-                    FROM daily_marks WHERE student_code=? ORDER BY date DESC
-                """
-                df_daily = pd.read_sql_query(query, conn, params=(code_st2,))
-                st.dataframe(df_daily, use_container_width=True)
+                c.execute("SELECT id, date, subject_name, term, mark FROM daily_marks WHERE student_code=? ORDER BY date DESC", (code_st2,))
+                rows = c.fetchall()
+                if rows:
+                    for row in rows:
+                        col_a, col_b, col_c, col_d, col_e = st.columns([2, 2, 1, 2, 2])
+                        col_a.write(f"📅 **{row['date']}**")
+                        col_b.write(f"📖 {row['subject_name']} (وەرز {row['term']})")
+                        
+                        edit_m = col_c.number_input("نمرە", min_value=0.0, max_value=20.0, value=float(row['mark']), key=f"adm_edit_{row['id']}")
+                        
+                        if col_d.button("💾 چاککردن", key=f"adm_btn_save_{row['id']}"):
+                            c.execute("UPDATE daily_marks SET mark=? WHERE id=?", (edit_m, row['id']))
+                            conn.commit()
+                            st.success("نمرەکە دەستکاری کرا!")
+                            conn.close()
+                            st.rerun()
+                            
+                        if col_e.button("🗑️ سڕینەوە", key=f"adm_btn_del_{row['id']}"):
+                            c.execute("DELETE FROM daily_marks WHERE id=?", (row['id'],))
+                            conn.commit()
+                            st.warning("نمرەکە سڕایەوە!")
+                            conn.close()
+                            st.rerun()
+                else:
+                    st.info("هیچ نمرەیەکی ڕۆژانە بۆ ئەم قوتابییە نەدۆزرایەوە.")
 
     elif choice == "⚙️ بەڕێوەبردنی وانەکان":
         st.subheader("⚙️ بەڕێوەبردنی وانەکان")
@@ -706,7 +768,7 @@ def teacher_dashboard():
 
     st.markdown("---")
     
-    t_menu = ["📝 تۆمارکردنی نمرەی ڕۆژانە", "📂 قوتابیانی پۆلەکەم", "📅 تۆمارکردنی غیابات"]
+    t_menu = ["📝 تۆمارکردنی نمرەی ڕۆژانە", "✏️ بینین و چاککردنی نمرەی ڕۆژانە", "📂 قوتابیانی پۆلەکەم", "📅 تۆمارکردنی غیابات"]
     t_choice = st.radio("دیاری کردنی بەش:", t_menu, horizontal=True)
 
     opts = [f"ژووری {c_num} - وانەی: {s_num}" for c_num, s_num in parsed]
@@ -741,6 +803,42 @@ def teacher_dashboard():
                 st.success("نمرەکان بە سەرکەوتوویی پاشەکەوت کران!")
         else:
             st.info("هیچ قوتابییەک لەم ژوورەدا نییە.")
+
+    elif t_choice == "✏️ بینین و چاککردنی نمرەی ڕۆژانە":
+        st.subheader(f"🔍 بینین و چاککردنی نمرە تۆمارکراوەکان (ژووری {target_cls} - {target_sub})")
+        
+        c.execute("SELECT student_code, full_name FROM students WHERE class_num=?", (target_cls,))
+        st_in_cls = c.fetchall()
+        
+        if st_in_cls:
+            st_dict = {f"{r['full_name']}": r['student_code'] for r in st_in_cls}
+            sel_st = st.selectbox("قوتابی هەڵبژێرە:", list(st_dict.keys()))
+            scode = st_dict[sel_st]
+            
+            c.execute("SELECT id, date, term, mark FROM daily_marks WHERE student_code=? AND subject_name=? ORDER BY date DESC", (scode, target_sub))
+            m_list = c.fetchall()
+            
+            if m_list:
+                for row in m_list:
+                    c1, c2, c3, c4 = st.columns([2, 1, 2, 2])
+                    c1.write(f"📅 **{row['date']}** (وەرز {row['term']})")
+                    new_val = c2.number_input("نمرە", min_value=0.0, max_value=20.0, value=float(row['mark']), key=f"m_edit_{row['id']}")
+                    
+                    if c3.button("💾 چاککردن", key=f"btn_save_{row['id']}"):
+                        c.execute("UPDATE daily_marks SET mark=? WHERE id=?", (new_val, row['id']))
+                        conn.commit()
+                        st.success("نمرەکە نوێکرایەوە!")
+                        conn.close()
+                        st.rerun()
+                        
+                    if c4.button("🗑️ سڕینەوە", key=f"btn_del_{row['id']}"):
+                        c.execute("DELETE FROM daily_marks WHERE id=?", (row['id'],))
+                        conn.commit()
+                        st.warning("نمرەکە سڕایەوە!")
+                        conn.close()
+                        st.rerun()
+            else:
+                st.info("هیچ نمرەیەکی ڕۆژانە بۆ ئەم قوتابییە تۆمار نەکراوە.")
 
     elif t_choice == "📂 قوتابیانی پۆلەکەم":
         st.subheader(f"👥 لیستی قوتابیانی ژووری ({target_cls})")
