@@ -4,8 +4,10 @@ import pandas as pd
 from datetime import datetime
 
 # 1. بنکەی دراوە (Database Setup)
+DB_NAME = 'quran_center_web.db'  # ناوی فایلی داتابەیس جێگیرە تا داتاکان ڕەش نەبنەوە
+
 def get_db_connection():
-    conn = sqlite3.connect('quran_center_web.db')
+    conn = sqlite3.connect(DB_NAME)
     conn.row_factory = sqlite3.Row
     return conn
 
