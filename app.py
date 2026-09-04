@@ -255,7 +255,7 @@ def admin_dashboard():
             else:
                 st.info("هیچ قوتابییەک تا ئێستا تۆمار نەکراوە.")
 
-        with tab_st2:
+                with tab_st2:
             st.write("### ➕ تۆمارکردنی قوتابیی نوێ")
             
             if "auto_code" not in st.session_state:
@@ -281,14 +281,16 @@ def admin_dashboard():
 
             name = st.text_input("ناوی تەواوی قوتابی")
             
-            c3, c4 = st.columns(2)
+            c3, c4, c5 = st.columns(3)
             cls = c3.number_input("ژوور (1 تا 20)", min_value=1, max_value=20, step=1)
             phone = c4.text_input("ژمارەی مۆبایل")
+            address = c5.text_input("شوێنی دانیشتن (ناونیشان)")
 
             if st.button("💾 پاشەکەوتکردنی قوتابی"):
                 if code and name:
                     try:
-                        c.execute("INSERT INTO students VALUES (?,?,?,?,?,?)", (code, name, "", int(cls), "", phone))
+                        # لێرەدا شوێنی دانیشتن (address) ڕاستەوخۆ پاشەکەوت دەبێت
+                        c.execute("INSERT INTO students VALUES (?,?,?,?,?,?)", (code, name, "", int(cls), address, phone))
                         conn.commit()
                         st.success(f"قوتابی ({name}) بە سەرکەوتوویی تۆمارکرا!")
                         st.session_state.auto_code = ""
@@ -297,6 +299,7 @@ def admin_dashboard():
                         st.error("ئەم کۆدە پێشتر بۆ قوتابییەکی تر بەکارهاتووە! کلیک لە 'داواکردنی کۆدی نوێ' بکە.")
                 else:
                     st.error("تکایە بەلایەنی کەمەوە ناو و کۆد بنووسە.")
+
 
         with tab_st3:
             st.write("### 📋 تۆمارکردنی بەکۆمەڵ")
