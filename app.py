@@ -2,10 +2,15 @@ import streamlit as st
 import sqlite3
 import pandas as pd
 from datetime import datetime
+import io
+from reportlab.lib.pagesizes import A4
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib import colors
 
 # 1. بنکەی دراوە (Database Setup)
 def get_db_connection():
-    conn = sqlite3.connect('quran_center_web.db')
+    conn = sqlite3.connect('quran_center_web.db', check_same_thread=False)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -130,20 +135,26 @@ if "logged_in" not in st.session_state:
 def get_student_grades_df(student_code, conn):
     query = """
         SELECT 
-            d.subject_name AS 'وانە / بابەت',
-            d.term AS 'وەرز',
-            ROUND(MIN(20.0, IFNULL(SUM(d.mark), 0)), 2) AS 'کۆی ڕۆژانە (20)',
+            all_subs.subject_name AS 'وانە / بابەت',
+            all_subs.term AS 'وەرز',
+            ROUND(MIN(20.0, IFNULL(d.daily_sum, 0)), 2) AS 'کۆی ڕۆژانە (20)',
             IFNULL(e.exam_score, 0) AS 'تاقیکردنەوە (30)',
-            ROUND(MIN(20.0, IFNULL(SUM(d.mark), 0)) + IFNULL(e.exam_score, 0), 2) AS 'کۆی گشتی (50)'
-        FROM daily_marks d
+            ROUND(MIN(20.0, IFNULL(d.daily_sum, 0)) + IFNULL(e.exam_score, 0), 2) AS 'کۆی گشتی (50)'
+        FROM (
+            SELECT DISTINCT subject_name, term FROM daily_marks WHERE student_code = ?
+            UNION
+            SELECT DISTINCT subject_name, term FROM exam_marks WHERE student_code = ?
+        ) all_subs
+        LEFT JOIN (
+            SELECT subject_name, term, SUM(mark) as daily_sum 
+            FROM daily_marks WHERE student_code = ? GROUP BY subject_name, term
+        ) d ON all_subs.subject_name = d.subject_name AND all_subs.term = d.term
         LEFT JOIN exam_marks e 
-            ON d.student_code = e.student_code 
-            AND d.subject_name = e.subject_name 
-            AND d.term = e.term
-        WHERE d.student_code = ?
-        GROUP BY d.subject_name, d.term
+            ON all_subs.subject_name = e.subject_name 
+            AND all_subs.term = e.term AND e.student_code = ?
+        ORDER BY all_subs.term, all_subs.subject_name
     """
-    return pd.read_sql_query(query, conn, params=(student_code,))
+    return pd.read_sql_query(query, conn, params=(student_code, student_code, student_code, student_code))
 
 # 3. پەڕەی چوونەژوورەوە
 def login_page():
@@ -162,6 +173,7 @@ def login_page():
                 st.session_state.logged_in = True
                 st.session_state.role = "Admin"
                 st.session_state.user_info = dict(admin)
+                conn.close()
                 st.rerun()
 
             c.execute("SELECT * FROM teachers WHERE username=? AND password=?", (username, password))
@@ -213,6 +225,7 @@ def admin_dashboard():
     
     if st.button("🚪 دەرچوون (Logout)"):
         st.session_state.logged_in = False
+        conn.close()
         st.rerun()
 
     st.markdown("---")
@@ -280,12 +293,14 @@ def admin_dashboard():
                               (new_name, new_cls, new_phone, new_addr, edit_st['student_code']))
                     conn.commit()
                     st.success("زانیارییەکانی قوتابی بە سەرکەوتوویی دەستکاری کران!")
+                    conn.close()
                     st.rerun()
 
                 if col_btn2.button("🗑️ سڕینەوەی ئەم قوتابییە"):
                     c.execute("DELETE FROM students WHERE student_code=?", (edit_st['student_code'],))
                     conn.commit()
                     st.warning(f"قوتابی ({edit_st['full_name']}) سڕایەوە!")
+                    conn.close()
                     st.rerun()
             else:
                 st.info("هیچ قوتابییەک بۆ دەستکاریکردن نەدۆزرایەوە.")
@@ -311,6 +326,7 @@ def admin_dashboard():
                 st.write(" ")
                 if st.button("🎲 داواکردنی کۆدی نوێ"):
                     generate_next_code()
+                    conn.close()
                     st.rerun()
 
             name = st.text_input("ناوی تەواوی قوتابی", key="add_name")
@@ -327,6 +343,7 @@ def admin_dashboard():
                         conn.commit()
                         st.success(f"قوتابی ({name}) بە سەرکەوتوویی تۆمارکرا!")
                         st.session_state.auto_code = ""
+                        conn.close()
                         st.rerun()
                     except sqlite3.IntegrityError:
                         st.error("ئەم کۆدە پێشتر بۆ قوتابییەکی تر بەکارهاتووە! کلیک لە 'داواکردنی کۆدی نوێ' بکە.")
@@ -350,6 +367,7 @@ def admin_dashboard():
                         cur += 1
                 conn.commit()
                 st.success("ناوەکان بە سەرکەوتوویی لە داتابەیس پاشەکەوت کران!")
+                conn.close()
                 st.rerun()
 
     elif choice == "📂 قوتابیان بەپێی ژوورەکان (1-20)":
@@ -416,12 +434,14 @@ def admin_dashboard():
             if new_s:
                 c.execute("INSERT OR IGNORE INTO custom_subjects (subject_name) VALUES (?)", (new_s,))
                 conn.commit()
+                conn.close()
                 st.rerun()
 
         del_s = c2.selectbox("وانە بۆ سڕینەوە:", all_subs)
         if c2.button("سڕینەوە"):
             c.execute("DELETE FROM custom_subjects WHERE subject_name=?", (del_s,))
             conn.commit()
+            conn.close()
             st.rerun()
 
     elif choice == "👨‍🏫 تۆمارکردن و دەستکاریکردنی مامۆستایان":
@@ -456,7 +476,6 @@ def admin_dashboard():
 
                 all_subs = get_all_subjects()
                 
-                # Parsing existing assignment
                 parsed_t = []
                 if e_teacher['assigned_subjects']:
                     for item in e_teacher['assigned_subjects'].split('|'):
@@ -484,12 +503,14 @@ def admin_dashboard():
                               (t_name_edit, t_user_edit, t_pass_edit, f"{edit_cls1},{edit_cls2}", sub_str_new, e_teacher['teacher_code']))
                     conn.commit()
                     st.success("زانیارییەکانی مامۆستا دەستکاری کران!")
+                    conn.close()
                     st.rerun()
 
                 if btn_e2.button("🗑️ سڕینەوەی ئەم مامۆستایە"):
                     c.execute("DELETE FROM teachers WHERE teacher_code=?", (e_teacher['teacher_code'],))
                     conn.commit()
                     st.warning("مامۆستاکە سڕایەوە!")
+                    conn.close()
                     st.rerun()
             else:
                 st.info("هیچ مامۆستایەک نییە بۆ دەستکاریکردن.")
@@ -515,6 +536,7 @@ def admin_dashboard():
                               (code, name, uname, pwd, f"{cls1},{cls2}", sub_str))
                     conn.commit()
                     st.success("مامۆستا بە سەرکەوتوویی تۆمارکرا!")
+                    conn.close()
                     st.rerun()
                 else:
                     st.error("تکایە هەموو بڕگەکان پڕبکەرەوە.")
@@ -588,7 +610,7 @@ def admin_dashboard():
                 st.success("نمرە تۆمارکرا!")
 
     elif choice == "📄 کارتی A4 و ڕاپۆرت":
-        st.subheader("📄 کارتی ڕاپۆرتی قوتابی")
+        st.subheader("📄 کارتی ڕاپۆرتی قوتابی (A4)")
         c.execute("SELECT * FROM students")
         st_rows = c.fetchall()
         if st_rows:
@@ -602,11 +624,62 @@ def admin_dashboard():
             <div class="card-box">
                 <h3 style="text-align: center; color: #10b981;">📖 سیستەمی بنکەی قورئان - کارتی نمرە</h3>
                 <hr>
-                <p><b>ناوی قوتابی:</b> {s_data['full_name']} | <b>کۆد:</b> {s_data['student_code']} | <b>ژوور:</b> {s_data['class_num']} | <b>شوێنی دانیشتن:</b> {s_data['address']}</p>
+                <p><b>ناوی قوتابی:</b> {s_data['full_name']} | <b>کۆد:</b> {s_data['student_code']} | <b>ژوور:</b> {s_data['class_num']} | <b>شوێنی دانیشتن:</b> {s_data['address'] if s_data['address'] else 'دیاری نەکراوە'}</p>
                 <hr>
             </div>
             """, unsafe_allow_html=True)
             st.dataframe(df_g, use_container_width=True)
+
+            def generate_a4_pdf():
+                buffer = io.BytesIO()
+                doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
+                elements = []
+                styles = getSampleStyleSheet()
+
+                title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontSize=18, alignment=1, spaceAfter=15)
+                elements.append(Paragraph("<b>Quran Center - Student Report Card</b>", title_style))
+                elements.append(Spacer(1, 10))
+
+                info_data = [
+                    ["Student Name", str(s_data['full_name'])],
+                    ["Student Code", str(s_data['student_code'])],
+                    ["Class / Room", str(s_data['class_num'])],
+                    ["Address", str(s_data['address'] if s_data['address'] else '-')]
+                ]
+                t_info = Table(info_data, colWidths=[150, 300])
+                t_info.setStyle(TableStyle([
+                    ('BACKGROUND', (0,0), (0,-1), colors.whitesmoke),
+                    ('GRID', (0,0), (-1,-1), 1, colors.grey),
+                    ('PADDING', (0,0), (-1,-1), 6),
+                ]))
+                elements.append(t_info)
+                elements.append(Spacer(1, 15))
+
+                if not df_g.empty:
+                    table_data = [["Subject", "Term", "Daily (20)", "Exam (30)", "Total (50)"]]
+                    for _, r in df_g.iterrows():
+                        table_data.append([str(r['وانە / بابەت']), str(r['وەرز']), str(r['کۆی ڕۆژانە (20)']), str(r['تاقیکردنەوە (30)']), str(r['کۆی گشتی (50)'])])
+                    
+                    t_marks = Table(table_data, colWidths=[130, 60, 80, 80, 80])
+                    t_marks.setStyle(TableStyle([
+                        ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
+                        ('GRID', (0,0), (-1,-1), 1, colors.black),
+                        ('ALIGN', (1,0), (-1,-1), 'CENTER'),
+                        ('PADDING', (0,0), (-1,-1), 6),
+                    ]))
+                    elements.append(t_marks)
+
+                doc.build(elements)
+                buffer.seek(0)
+                return buffer
+
+            pdf_file = generate_a4_pdf()
+            st.download_button(
+                label="📥 ڕاکێشانی کارتی A4 بە فۆرماتی (PDF)",
+                data=pdf_file,
+                file_name=f"Report_{s_data['student_code']}.pdf",
+                mime="application/pdf"
+            )
 
     conn.close()
 
