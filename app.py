@@ -4,13 +4,11 @@ from streamlit_gsheets import GSheetsConnection
 
 st.set_page_config(page_title="سیستەمی بنکەی قورئان", layout="wide", page_icon="📖")
 
-# بەستنەوە بە Google Sheets
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def load_data():
     try:
-        # خوێندنەوەی داتاکان لە شێوەی DataFrame
-        df = conn.read(worksheet="Students", ttl=0)
+        df = conn.read(ttl=0)
         return df.dropna(how="all")
     except Exception:
         return pd.DataFrame(columns=["کۆدی قوتابی", "ناوی تەواو", "ژوور", "ژمارەی مۆبایل", "شوێنی دانیشتن"])
@@ -28,7 +26,7 @@ tab1, tab2 = st.tabs(["📜 لیستی قوتابیان", "➕ تۆمارکرد�
 
 with tab1:
     st.subheader("📜 قوتابییە تۆمارکراوەکان")
-    if st.button("🔄 نوێکردنەوەی داتاکان"):
+    if st.button("🔄 نوێکردنەوە"):
         st.cache_data.clear()
         st.rerun()
         
@@ -60,10 +58,8 @@ with tab2:
                     "شوێنی دانیشتن": address
                 }])
                 df_updated = pd.concat([df_curr, new_row], ignore_index=True)
-                
-                # نوێکردنەوەی Sheet
-                conn.update(worksheet="Students", data=df_updated)
-                st.success(f"قوتابی ({name}) بە سەرکەوتوویی تۆمارکرا!")
+                conn.update(data=df_updated)
+                st.success(f"قوتابی ({name}) پاشەکەوت کرا!")
                 st.cache_data.clear()
                 st.rerun()
             else:
