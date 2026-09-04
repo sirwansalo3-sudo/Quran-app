@@ -233,6 +233,7 @@ def admin_dashboard():
                         c1.write(f"**کۆد:** {st_data['student_code']}")
                         c2.write(f"**ژوور/پۆل:** {st_data['class_num']}")
                         c2.write(f"**مۆبایل:** {st_data['phone'] if st_data['phone'] else 'دیاری نەکراوە'}")
+                        c2.write(f"**شوێنی دانیشتن:** {st_data['address'] if st_data['address'] else 'دیاری نەکراوە'}")
                         
                         df_grades = get_student_grades_df(st_data['student_code'], conn)
                         st.dataframe(df_grades, use_container_width=True)
@@ -246,7 +247,7 @@ def admin_dashboard():
         with tab_st1:
             st.write("### 📜 لیستی گشتی قوتابیە تۆمارکراوەکان")
             query_st = """
-                SELECT student_code as 'کۆدی قوتابی', full_name as 'ناوی تەواو', class_num as 'ژوور', phone as 'ژمارەی مۆبایل'
+                SELECT student_code as 'کۆدی قوتابی', full_name as 'ناوی تەواو', class_num as 'ژوور', phone as 'ژمارەی مۆبایل', address as 'شوێنی دانیشتن'
                 FROM students ORDER BY class_num ASC
             """
             df_all_students = pd.read_sql_query(query_st, conn)
@@ -255,7 +256,7 @@ def admin_dashboard():
             else:
                 st.info("هیچ قوتابییەک تا ئێستا تۆمار نەکراوە.")
 
-                with tab_st2:
+        with tab_st2:
             st.write("### ➕ تۆمارکردنی قوتابیی نوێ")
             
             if "auto_code" not in st.session_state:
@@ -289,7 +290,6 @@ def admin_dashboard():
             if st.button("💾 پاشەکەوتکردنی قوتابی"):
                 if code and name:
                     try:
-                        # لێرەدا شوێنی دانیشتن (address) ڕاستەوخۆ پاشەکەوت دەبێت
                         c.execute("INSERT INTO students VALUES (?,?,?,?,?,?)", (code, name, "", int(cls), address, phone))
                         conn.commit()
                         st.success(f"قوتابی ({name}) بە سەرکەوتوویی تۆمارکرا!")
@@ -299,7 +299,6 @@ def admin_dashboard():
                         st.error("ئەم کۆدە پێشتر بۆ قوتابییەکی تر بەکارهاتووە! کلیک لە 'داواکردنی کۆدی نوێ' بکە.")
                 else:
                     st.error("تکایە بەلایەنی کەمەوە ناو و کۆد بنووسە.")
-
 
         with tab_st3:
             st.write("### 📋 تۆمارکردنی بەکۆمەڵ")
@@ -324,7 +323,7 @@ def admin_dashboard():
         st.subheader("🏢 شیت و لیستی قوتابیان بەپێی ژوور")
         selected_room = st.selectbox("ژوور هەڵبژێرە:", list(range(1, 21)))
         
-        c.execute("SELECT student_code as 'کۆد', full_name as 'ناوی تەواو', phone as 'مۆبایل' FROM students WHERE class_num=?", (selected_room,))
+        c.execute("SELECT student_code as 'کۆد', full_name as 'ناوی تەواو', phone as 'مۆبایل', address as 'شوێنی دانیشتن' FROM students WHERE class_num=?", (selected_room,))
         room_students = c.fetchall()
         
         if room_students:
@@ -517,7 +516,7 @@ def admin_dashboard():
             <div class="card-box">
                 <h3 style="text-align: center; color: #10b981;">📖 سیستەمی بنکەی قورئان - کارتی نمرە</h3>
                 <hr>
-                <p><b>ناوی قوتابی:</b> {s_data['full_name']} | <b>کۆد:</b> {s_data['student_code']} | <b>ژوور:</b> {s_data['class_num']}</p>
+                <p><b>ناوی قوتابی:</b> {s_data['full_name']} | <b>کۆد:</b> {s_data['student_code']} | <b>ژوور:</b> {s_data['class_num']} | <b>شوێنی دانیشتن:</b> {s_data['address']}</p>
                 <hr>
             </div>
             """, unsafe_allow_html=True)
@@ -586,7 +585,7 @@ def teacher_dashboard():
 
     elif t_choice == "📂 قوتابیانی پۆلەکەم":
         st.subheader(f"👥 لیستی قوتابیانی ژووری ({target_cls})")
-        students_df = pd.read_sql_query(f"SELECT student_code as 'کۆدی قوتابی', full_name as 'ناوی قوتابی', phone as 'مۆبایل' FROM students WHERE class_num={target_cls}", conn)
+        students_df = pd.read_sql_query(f"SELECT student_code as 'کۆدی قوتابی', full_name as 'ناوی قوتابی', phone as 'مۆبایل', address as 'شوێنی دانیشتن' FROM students WHERE class_num={target_cls}", conn)
         if not students_df.empty:
             st.dataframe(students_df, use_container_width=True)
         else:
