@@ -230,6 +230,67 @@ def login_page():
                 st.rerun()
             
             st.error("ناوی بەکارهێنەر یان وشەی نهێنی هەڵەیە!")
+# ==========================================
+# 1. ئەم فانکشنە بباتە سەرەوەی app.py (لەکەڵ فانکشنەکانی تر)
+# ==========================================
+def export_all_data_to_excel(conn):
+    output = io.BytesIO()
+    
+    df_students = pd.read_sql_query("""
+        SELECT student_code AS 'کۆدی قوتابی', full_name AS 'ناوی تەواو', 
+               class_num AS 'ژوور', phone AS 'مۆبایل', address AS 'ناونیشان'
+        FROM students ORDER BY class_num, student_code
+    """, conn)
+    
+    df_daily = pd.read_sql_query("""
+        SELECT d.student_code AS 'کۆدی قوتابی', s.full_name AS 'ناوی قوتابی', s.class_num AS 'ژوور',
+               d.subject_name AS 'بابەت', d.term AS 'وەرز', d.mark AS 'نمرە', d.date AS 'ڕێکەوت'
+        FROM daily_marks d
+        JOIN students s ON d.student_code = s.student_code
+        ORDER BY d.date DESC
+    """, conn)
+    
+    df_exam = pd.read_sql_query("""
+        SELECT e.student_code AS 'کۆدی قوتابی', s.full_name AS 'ناوی قوتابی', s.class_num AS 'ژوور',
+               e.subject_name AS 'بابەت', e.term AS 'وەرز', e.exam_score AS 'نمرەی تاقیکردنەوە'
+        FROM exam_marks e
+        JOIN students s ON e.student_code = s.student_code
+        ORDER BY s.class_num, e.student_code
+    """, conn)
+
+    df_attendance = pd.read_sql_query("""
+        SELECT a.student_code AS 'کۆدی قوتابی', s.full_name AS 'ناوی قوتابی', s.class_num AS 'ژوور',
+               a.date AS 'ڕێکەوت', a.status AS 'دۆخ', a.notes AS 'تێبینی'
+        FROM attendance a
+        JOIN students s ON a.student_code = s.student_code
+        ORDER BY a.date DESC
+    """, conn)
+
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df_students.to_excel(writer, sheet_name='لیستی قوتابیان', index=False)
+        df_daily.to_excel(writer, sheet_name='نمرەی ڕۆژانە', index=False)
+        df_exam.to_excel(writer, sheet_name='نمرەی تاقیکردنەوە', index=False)
+        df_attendance.to_excel(writer, sheet_name='غیابات و مۆڵەت', index=False)
+
+    output.seek(0)
+    return output
+
+
+# ==========================================
+# 2. لە ناو admin_dashboard ئەم پارچە کۆدە بەکاربێنە
+# ==========================================
+# لە شوێنی دابەزاندنی زانیارییەکان لە ناو admin_dashboard:
+st.subheader("📥 دابەزاندنی تەواوی زانیارییەکانی سیستەم")
+
+# بانگکردنی فانکشنەکە بە پاسدانی conn
+excel_file = export_all_data_to_excel(conn)
+
+st.download_button(
+    label="📊 داونلۆدکردنی هەموو زانیارییەکان بە فۆرماتی Excel",
+    data=excel_file,
+    file_name=f"Quran_Center_Data_{datetime.now().strftime('%Y_%m_%d')}.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+)
 
 # 4. دەستەی بەڕێوەبەر (Admin Dashboard)
 def admin_dashboard():
@@ -881,71 +942,3 @@ else:
     else:
         teacher_dashboard()
         
-import pandas as pd
-import io
-
-def export_all_data_to_excel(conn):
-    # دروستکردنی بوفەر بۆ پاشەکەوتکردنی فایلەکە لە میمۆریدا
-    output = io.BytesIO()
-    
-    # خشتەی قوتابیان
-    df_students = pd.read_sql_query("""
-        SELECT student_code AS 'کۆدی قوتابی', full_name AS 'ناوی تەواو', 
-               class_num AS 'ژوور', phone AS 'مۆبایل', address AS 'ناونیشان'
-        FROM students ORDER BY class_num, student_code
-    """, conn)
-    
-    # خشتەی نمرەی ڕۆژانە
-    df_daily = pd.read_sql_query("""
-        SELECT d.student_code AS 'کۆدی قوتابی', s.full_name AS 'ناوی قوتابی', s.class_num AS 'ژوور',
-               d.subject_name AS 'بابەت', d.term AS 'وەرز', d.mark AS 'نمرە', d.date AS 'ڕێکەوت'
-        FROM daily_marks d
-        JOIN students s ON d.student_code = s.student_code
-        ORDER BY d.date DESC
-    """, conn)
-    
-    # خشتەی نمرەی تاقیکردنەوە (30)
-    df_exam = pd.read_sql_query("""
-        SELECT e.student_code AS 'کۆدی قوتابی', s.full_name AS 'ناوی قوتابی', s.class_num AS 'ژوور',
-               e.subject_name AS 'بابەت', e.term AS 'وەرز', e.exam_score AS 'نمرەی تاقیکردنەوە'
-        FROM exam_marks e
-        JOIN students s ON e.student_code = s.student_code
-        ORDER BY s.class_num, e.student_code
-    """, conn)
-
-    # خشتەی غیابات و مۆڵەت
-    df_attendance = pd.read_sql_query("""
-        SELECT a.student_code AS 'کۆدی قوتابی', s.full_name AS 'ناوی قوتابی', s.class_num AS 'ژوور',
-               a.date AS 'ڕێکەوت', a.status AS 'دۆخ', a.notes AS 'تێبینی'
-        FROM attendance a
-        JOIN students s ON a.student_code = s.student_code
-        ORDER BY a.date DESC
-    """, conn)
-
-    # نووسینی هەموو خشتەکان لەناو یەک فایلی ئەکسل بە Sheetی جیاواز
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df_students.to_excel(writer, sheet_name='لیستی قوتابیان', index=False)
-        df_daily.to_excel(writer, sheet_name='نمرەی ڕۆژانە', index=False)
-        df_exam.to_excel(writer, sheet_name='نمرەی تاقیکردنەوە', index=False)
-        df_attendance.to_excel(writer, sheet_name='غیابات و مۆڵەت', index=False)
-
-    output.seek(0)
-    return output
-    # لە ناو admin_dashboard:
-st.subheader("📥 دابەزاندنی تەواوی زانیارییەکانی سیستەم")
-
-excel_data = export_all_data_to_excel(conn)
-
-st.download_button(
-    label="📊 داونلۆدکردنی هەموو زانیارییەکان بە فۆرماتی Excel",
-    data=excel_data,
-    file_name=f"Quran_Center_Data_{datetime.now().strftime('%Y_%m_%d')}.xlsx",
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-)
-streamlit
-pandas
-openpyxl
-arabic-reshaper
-python-bidi
-reportlab
-
