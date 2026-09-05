@@ -1,242 +1,882 @@
-import io
-import os
-import sqlite3
-from datetime import datetime
-import pandas as pd
 import streamlit as st
-
-# کتێبخانەکانی پەیوەندیدار بە PDF و فۆنتی کوردی
-import arabic_reshaper
-from bidi.algorithm import get_display
-from reportlab.lib import colors
+import sqlite3
+import pandas as pd
+from datetime import datetime
+import io
 from reportlab.lib.pagesizes import A4
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
-from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
-from reportlab.lib.styles import ParagraphStyle
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib import colors
 
-# ==========================================
-# 1. ڕێکخستنی لاپەڕە و دیزاینی CSS
-# ==========================================
-st.set_page_config(
-    page_title="سیستەمی قوتابخانەی قورئان",
-    page_icon="📖",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+# 1. بنکەی دراوە (Database Setup)
+def get_db_connection():
+    conn = sqlite3.connect('quran_center_web.db', check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    return conn
 
-# دیزاینی نەرم و مۆدێرن بە جێبەجێکردنی CSS
+def init_db():
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS admins (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE, password TEXT, full_name TEXT)''')
+    
+    c.execute('''CREATE TABLE IF NOT EXISTS teachers (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, 
+                    teacher_code TEXT UNIQUE, 
+                    full_name TEXT, 
+                    username TEXT UNIQUE, 
+                    password TEXT, 
+                    assigned_classes TEXT,
+                    assigned_subjects TEXT)''')
+                    
+    c.execute('''CREATE TABLE IF NOT EXISTS students (
+                    student_code TEXT PRIMARY KEY, 
+                    full_name TEXT, 
+                    level_type TEXT, 
+                    class_num INTEGER, 
+                    address TEXT, 
+                    phone TEXT)''')
+
+    c.execute('''CREATE TABLE IF NOT EXISTS custom_subjects (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    subject_name TEXT UNIQUE)''')
+
+    c.execute('''CREATE TABLE IF NOT EXISTS daily_marks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    student_code TEXT,
+                    subject_name TEXT,
+                    term INTEGER,
+                    mark REAL,
+                    date TEXT)''')
+
+    c.execute('''CREATE TABLE IF NOT EXISTS exam_marks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    student_code TEXT,
+                    subject_name TEXT,
+                    term INTEGER,
+                    exam_score REAL,
+                    UNIQUE(student_code, subject_name, term))''')
+    
+    c.execute('''CREATE TABLE IF NOT EXISTS attendance (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    student_code TEXT,
+                    date TEXT,
+                    status TEXT,
+                    notes TEXT)''')
+    
+    default_subjects = [
+        "قورئان", "فەرموودە 1", "پەروەردە 1", "قاعدة النورانية", 
+        "فقه", "لەبەرکردنی قورئان", "پێداچوونەوەی قورئان", 
+        "فەرموودە 2", "پەروەردە 2", "تجوید"
+    ]
+    for sub in default_subjects:
+        c.execute("INSERT OR IGNORE INTO custom_subjects (subject_name) VALUES (?)", (sub,))
+
+    c.execute("SELECT COUNT(*) FROM admins")
+    if c.fetchone()[0] == 0:
+        c.execute("INSERT INTO admins (username, password, full_name) VALUES ('admin', 'admin123', 'بەڕێوەبەری سەرەکی')")
+    conn.commit()
+    conn.close()
+
+init_db()
+
+def get_all_subjects():
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute("SELECT subject_name FROM custom_subjects")
+    subs = [row['subject_name'] for row in c.fetchall()]
+    conn.close()
+    return subs
+
+# 2. دیزاینی مۆدێرن
+st.set_page_config(page_title="سیستەمی بنکەی قورئان", layout="wide", page_icon="📖")
+
 st.markdown("""
     <style>
-    .main {
-        direction: rtl;
+    .stMainBlockContainer {
+        direction: RTL;
         text-align: right;
+        font-family: 'Segoe UI', Tahoma, sans-serif;
     }
-    div.stButton > button {
+    .stApp { background-color: #f8fafc; }
+    .metric-card {
+        background-color: #ffffff;
+        padding: 15px;
+        border-radius: 12px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+        border: 1px solid #e2e8f0;
+        text-align: center;
+        margin-bottom: 10px;
+    }
+    .metric-title { color: #64748b; font-size: 13px; font-weight: 600; }
+    .metric-value { color: #0f172a; font-size: 24px; font-weight: 700; }
+    .stButton>button {
+        background-color: #10b981 !important;
+        color: white !important;
+        border-radius: 8px !important;
+        border: none !important;
+        font-weight: 600 !important;
         width: 100%;
-        background-color: #0f766e;
-        color: white;
-        border-radius: 8px;
-        padding: 0.5rem 1rem;
-        font-weight: bold;
-        border: none;
-        transition: all 0.3s ease;
     }
-    div.stButton > button:hover {
-        background-color: #115e59;
-        color: white;
-    }
-    .stDownloadButton > button {
-        width: 100%;
-        background-color: #0284c7;
-        color: white;
-        border-radius: 8px;
-        padding: 0.6rem 1rem;
-        font-weight: bold;
-        border: none;
-    }
-    .stDownloadButton > button:hover {
-        background-color: #0369a1;
-        color: white;
+    .card-box {
+        border: 1px solid #e2e8f0;
+        padding: 20px;
+        border-radius: 12px;
+        background-color: #ffffff;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
     }
     </style>
 """, unsafe_allow_html=True)
 
-# ==========================================
-# 2. دروستکردنی کارتی PDF
-# ==========================================
-FONT_PATH = "NotoNaskhArabic-Regular.ttf"
-FONT_NAME = "KurdishFont"
+if "logged_in" not in st.session_state:
+    st.session_state.logged_in = False
+    st.session_state.role = None
+    st.session_state.user_info = None
 
-if os.path.exists(FONT_PATH):
-    pdfmetrics.registerFont(TTFont(FONT_NAME, FONT_PATH))
-else:
-    FONT_NAME = "Helvetica"
-
-PRIMARY_COLOR = colors.HexColor("#0f766e")
-SECONDARY_COLOR = colors.HexColor("#f0fdf4")
-TEXT_COLOR = colors.HexColor("#1e293b")
-BORDER_COLOR = colors.HexColor("#cbd5e1")
-
-def reshape_txt(text):
-    if not text or FONT_NAME == "Helvetica":
-        return str(text)
-    reshaped_text = arabic_reshaper.reshape(str(text))
-    return get_display(reshaped_text)
-
-def generate_a4_pdf(s_data, df_g):
-    buffer = io.BytesIO()
-    doc = SimpleDocTemplate(
-        buffer, 
-        pagesize=A4, 
-        rightMargin=36, 
-        leftMargin=36, 
-        topMargin=36, 
-        bottomMargin=36
-    )
-    elements = []
+# زانیاری نمرەی ڕۆژانە بە هەژمارکردنی غیاب و مۆڵەت
+def calculate_daily_20(student_code, subject_name, term, conn):
+    c = conn.cursor()
+    c.execute("SELECT mark, date FROM daily_marks WHERE student_code=? AND subject_name=? AND term=?", (student_code, subject_name, term))
+    marks_records = c.fetchall()
     
-    title_style = ParagraphStyle(
-        'ArabicTitle', fontName=FONT_NAME, fontSize=20, leading=24,
-        textColor=PRIMARY_COLOR, alignment=1, spaceAfter=15
-    )
-    cell_style = ParagraphStyle(
-        'ArabicCell', fontName=FONT_NAME, fontSize=10, leading=13,
-        textColor=TEXT_COLOR, alignment=1
-    )
+    if not marks_records:
+        return 0.0
+    
+    valid_marks = []
+    for record in marks_records:
+        m_val = record['mark']
+        m_date = record['date']
+        
+        c.execute("SELECT status FROM attendance WHERE student_code=? AND date=?", (student_code, m_date))
+        att = c.fetchone()
+        
+        if att:
+            status = att['status']
+            if status == "مۆڵەت":
+                continue # مۆڵەت حساب ناکرێت
+            elif status == "نەهاتوو (غیاب)":
+                valid_marks.append(0.0) # غیاب دەبێتە سفر
+            else:
+                valid_marks.append(m_val)
+        else:
+            valid_marks.append(m_val)
+            
+    if not valid_marks:
+        return 0.0
+        
+    avg_mark = sum(valid_marks) / len(valid_marks)
+    return round(avg_mark, 2)
 
-    elements.append(Paragraph(reshape_txt("📖 بنکەی قورئانی پیرۆز - کارتی ئەنجامی قوتابی"), title_style))
-    elements.append(Spacer(1, 10))
+def get_student_grades_df(student_code, conn):
+    c = conn.cursor()
+    c.execute("""
+        SELECT DISTINCT subject_name, term FROM daily_marks WHERE student_code = ?
+        UNION
+        SELECT DISTINCT subject_name, term FROM exam_marks WHERE student_code = ?
+    """, (student_code, student_code))
+    
+    pairs = c.fetchall()
+    data = []
+    
+    for row in pairs:
+        sub = row['subject_name']
+        tm = row['term']
+        
+        daily_20 = calculate_daily_20(student_code, sub, tm, conn)
+        
+        c.execute("SELECT exam_score FROM exam_marks WHERE student_code=? AND subject_name=? AND term=?", (student_code, sub, tm))
+        ex = c.fetchone()
+        exam_30 = ex['exam_score'] if ex else 0.0
+        
+        total_50 = round(daily_20 + exam_30, 2)
+        
+        data.append({
+            'وانە / بابەت': sub,
+            'وەرز': tm,
+            'کۆی ڕۆژانە (20)': daily_20,
+            'تاقیکردنەوە (30)': exam_30,
+            'کۆی گشتی (50)': total_50
+        })
+        
+    return pd.DataFrame(data)
 
-    info_data = [
-        [
-            Paragraph(reshape_txt(s_data.get('full_name', '')), cell_style),
-            Paragraph(reshape_txt("ناوی قوتابی:"), cell_style),
-            Paragraph(reshape_txt(str(s_data.get('student_code', ''))), cell_style),
-            Paragraph(reshape_txt("کۆدی قوتابی:"), cell_style),
-        ],
-        [
-            Paragraph(reshape_txt(str(s_data.get('address', '-') if s_data.get('address') else '-')), cell_style),
-            Paragraph(reshape_txt("ناونیشان:"), cell_style),
-            Paragraph(reshape_txt(str(s_data.get('class_num', ''))), cell_style),
-            Paragraph(reshape_txt("ژوور / پۆل:"), cell_style),
-        ]
+# 3. پەڕەی چوونەژوورەوە
+def login_page():
+    st.title("📖 سیستەمی بنکەی قورئان")
+    with st.form("login_form"):
+        username = st.text_input("ناوی بەکارهێنەر")
+        password = st.text_input("وشەی نهێنی", type="password")
+        submit = st.form_submit_button("چوونەژوورەوە")
+        
+        if submit:
+            conn = get_db_connection()
+            c = conn.cursor()
+            c.execute("SELECT * FROM admins WHERE username=? AND password=?", (username, password))
+            admin = c.fetchone()
+            if admin:
+                st.session_state.logged_in = True
+                st.session_state.role = "Admin"
+                st.session_state.user_info = dict(admin)
+                conn.close()
+                st.rerun()
+
+            c.execute("SELECT * FROM teachers WHERE username=? AND password=?", (username, password))
+            teacher = c.fetchone()
+            conn.close()
+            
+            if teacher:
+                st.session_state.logged_in = True
+                st.session_state.role = "Teacher"
+                st.session_state.user_info = dict(teacher)
+                st.rerun()
+            
+            st.error("ناوی بەکارهێنەر یان وشەی نهێنی هەڵەیە!")
+
+# 4. دەستەی بەڕێوەبەر (Admin Dashboard)
+def admin_dashboard():
+    st.title("👑 هەژماری بەڕێوەبەری سەرەکی")
+    
+    conn = get_db_connection()
+    c = conn.cursor()
+
+    c.execute("SELECT COUNT(*) FROM students")
+    total_students = c.fetchone()[0]
+    c.execute("SELECT COUNT(*) FROM teachers")
+    total_teachers = c.fetchone()[0]
+    c.execute("SELECT COUNT(*) FROM custom_subjects")
+    total_subs = c.fetchone()[0]
+
+    col_m1, col_m2, col_m3 = st.columns(3)
+    col_m1.markdown(f"<div class='metric-card'><div class='metric-title'>تێکڕای قوتابیان</div><div class='metric-value'>{total_students}</div></div>", unsafe_allow_html=True)
+    col_m2.markdown(f"<div class='metric-card'><div class='metric-title'>تێکڕای مامۆستایان</div><div class='metric-value'>{total_teachers}</div></div>", unsafe_allow_html=True)
+    col_m3.markdown(f"<div class='metric-card'><div class='metric-title'>وانە بەردەستەکان</div><div class='metric-value'>{total_subs}</div></div>", unsafe_allow_html=True)
+
+    st.markdown("---")
+
+    menu = [
+        "📊 داشبۆردی گشتی و گەڕان",
+        "👨‍🎓 بەڕێوەبردن و لیستی قوتابیان",
+        "📂 قوتابیان بەپێی ژوورەکان (1-20)",
+        "📝 تۆمارکردن و دەستکاریکردنی نمرەی ڕۆژانە",
+        "⚙️ بەڕێوەبردنی وانەکان",
+        "👨‍🏫 تۆمارکردن و دەستکاریکردنی مامۆستایان", 
+        "📅 تۆمارکردنی غیابات و ڕاپۆرت",
+        "💯 نمرەی تاقیکردنەوە (30)", 
+        "📄 کارتی A4 و ڕاپۆرت"
     ]
     
-    t_info = Table(info_data, colWidths=[160, 90, 160, 90])
-    t_info.setStyle(TableStyle([
-        ('BACKGROUND', (1,0), (1,-1), SECONDARY_COLOR),
-        ('BACKGROUND', (3,0), (3,-1), SECONDARY_COLOR),
-        ('GRID', (0,0), (-1,-1), 0.5, BORDER_COLOR),
-        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
-        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-        ('PADDING', (0,0), (-1,-1), 8),
-    ]))
-    elements.append(t_info)
-
-    doc.build(elements)
-    buffer.seek(0)
-    return buffer
-
-# ==========================================
-# 3. بەشی دابەزاندنی Excel (بەبێ کێشەی DatabaseError)
-# ==========================================
-def export_all_data_to_excel(conn):
-    output = io.BytesIO()
+    choice = st.selectbox("بەشی داواکراو هەڵبژێرە:", menu)
     
-    def safe_read_sql(query, conn):
-        try:
-            return pd.read_sql_query(query, conn)
-        except Exception:
-            return pd.DataFrame()
+    if st.button("🚪 دەرچوون (Logout)"):
+        st.session_state.logged_in = False
+        conn.close()
+        st.rerun()
 
-    df_students = safe_read_sql("SELECT * FROM students", conn)
-    df_daily = safe_read_sql("SELECT * FROM daily_marks", conn)
-    df_exam = safe_read_sql("SELECT * FROM exam_marks", conn)
-    df_attendance = safe_read_sql("SELECT * FROM attendance", conn)
-
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        if not df_students.empty:
-            df_students.to_excel(writer, sheet_name='لیستی قوتابیان', index=False)
-        else:
-            pd.DataFrame({'پەیام': ['هیچ زانیارییەک نییە']}).to_excel(writer, sheet_name='لیستی قوتابیان', index=False)
-            
-        if not df_daily.empty:
-            df_daily.to_excel(writer, sheet_name='نمرەی ڕۆژانە', index=False)
-            
-        if not df_exam.empty:
-            df_exam.to_excel(writer, sheet_name='نمرەی تاقیکردنەوە', index=False)
-            
-        if not df_attendance.empty:
-            df_attendance.to_excel(writer, sheet_name='غیابات', index=False)
-
-    output.seek(0)
-    return output
-
-# ==========================================
-# 4. دەستپێکردنی داتابەیس و ڕووکاری پڕۆگرامەکە
-# ==========================================
-conn = sqlite3.connect("quran_center.db", check_same_thread=False)
-
-def student_view():
-    st.title("🎓 بەشی قوتابیان و ئەنجامەکان")
-    st.subheader("🔎 گەڕان بەدوای نمرەی قوتابی")
-    
-    code_input = st.text_input("کۆدی قوتابی بنووسە:")
-    if code_input:
-        st.info(f"ئەنجامەکانی کۆدی: {code_input}")
-
-def admin_dashboard():
-    st.title("👨‍💼 داشبۆردی بەڕێوەبەر")
-    
-    st.subheader("🔎 گەڕانی خێرا و بینینی زانیاری قوتابی")
-    st.text_input("ناوی قوتابی یاخود کۆد بنووسە:")
-    
     st.markdown("---")
-    st.subheader("📥 دابەزاندنی تەواوی زانیارییەکانی سیستەم")
 
-    excel_file = export_all_data_to_excel(conn)
-
-    st.download_button(
-        label="📊 داونلۆدکردنی هەموو زانیارییەکان بە فۆرماتی Excel",
-        data=excel_file,
-        file_name=f"Quran_Center_Data_{datetime.now().strftime('%Y_%m_%d')}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
-
-def main():
-    st.sidebar.title("📌 مێنیوی سەرەکی")
-    
-    menu_choice = st.sidebar.radio(
-        "بەشێک هەڵبژێرە:",
-        ["🎓 بەشی قوتابیان", "🔐 چوونەژوورەوەی بەڕێوەبەر"]
-    )
-
-    if menu_choice == "🎓 بەشی قوتابیان":
-        student_view()
-
-    elif menu_choice == "🔐 چوونەژوورەوەی بەڕێوەبەر":
-        if "logged_in" not in st.session_state:
-            st.session_state.logged_in = False
-
-        if not st.session_state.logged_in:
-            st.subheader("🔑 چوونەژوورەوەی بەڕێوەبەر")
-            username = st.text_input("ناوی بەکارهێنەر:")
-            password = st.text_input("وێنەی نهێنی (Password):", type="password")
+    if choice == "📊 داشبۆردی گشتی و گەڕان":
+        st.subheader("🔍 گەڕانی خێرا و بینینی زانیاری قوتابی")
+        search_query = st.text_input("ناوی قوتابی یان کۆد بنووسە:")
+        
+        if search_query:
+            c.execute("SELECT * FROM students WHERE full_name LIKE ? OR student_code LIKE ?", (f"%{search_query}%", f"%{search_query}%"))
+            results = c.fetchall()
             
-            if st.button("چوونەژوورەوە"):
-                # پاسوۆردەکە دانراوە لەسەر admin123
-                if username == "admin" and password == "admin123":
-                    st.session_state.logged_in = True
-                    st.success("بە سەرکەوتوویی چوویته ژوورەوە!")
+            if results:
+                for st_data in results:
+                    with st.expander(f"👤 {st_data['full_name']} | ژووری ({st_data['class_num']}) | کۆد: {st_data['student_code']}"):
+                        c1, c2 = st.columns(2)
+                        c1.write(f"**ناوی تەواو:** {st_data['full_name']}")
+                        c1.write(f"**کۆد:** {st_data['student_code']}")
+                        c2.write(f"**ژوور/پۆل:** {st_data['class_num']}")
+                        c2.write(f"**مۆبایل:** {st_data['phone'] if st_data['phone'] else 'دیاری نەکراوە'}")
+                        c2.write(f"**شوێنی دانیشتن:** {st_data['address'] if st_data['address'] else 'دیاری نەکراوە'}")
+                        
+                        df_grades = get_student_grades_df(st_data['student_code'], conn)
+                        st.dataframe(df_grades, use_container_width=True)
+            else:
+                st.warning("هیچ ئەنجامێک نەدۆزرایەوە.")
+
+    elif choice == "👨‍🎓 بەڕێوەبردن و لیستی قوتابیان":
+        st.subheader("👨‍🎓 بەڕێوەبردنی قوتابیان")
+        tab_st1, tab_st2, tab_st3, tab_st4 = st.tabs(["📜 لیستی قوتابیان", "✏️ دەستکاریکردنی قوتابی", "➕ تۆمارکردنی یەک قوتابی", "📋 تۆمارکردنی بەکۆمەڵ"])
+
+        with tab_st1:
+            st.write("### 📜 لیستی گشتی قوتابیە تۆمارکراوەکان")
+            query_st = """
+                SELECT student_code as 'کۆدی قوتابی', full_name as 'ناوی تەواو', class_num as 'ژوور', phone as 'ژمارەی مۆبایل', address as 'شوێنی دانیشتن'
+                FROM students ORDER BY class_num ASC
+            """
+            df_all_students = pd.read_sql_query(query_st, conn)
+            if not df_all_students.empty:
+                st.dataframe(df_all_students, use_container_width=True)
+            else:
+                st.info("هیچ قوتابییەک تا ئێستا تۆمار نەکراوە.")
+
+        with tab_st2:
+            st.write("### ✏️ دەستکاریکردن یان سڕینەوەی زانیارییەکانی قوتابی")
+            c.execute("SELECT student_code, full_name, class_num, phone, address FROM students")
+            st_list = c.fetchall()
+            
+            if st_list:
+                st_dict = {f"{r['full_name']} (کۆد: {r['student_code']})": r for r in st_list}
+                sel_edit = st.selectbox("قوتابی هەڵبژێرە بۆ دەستکاریکردن:", list(st_dict.keys()))
+                edit_st = st_dict[sel_edit]
+
+                st.info(f"دەستکاریکردنی زانیارییەکانی قوتابی: {edit_st['full_name']}")
+                new_name = st.text_input("ناوی تەواوی قوتابی", value=edit_st['full_name'])
+                
+                ce1, ce2, ce3 = st.columns(3)
+                new_cls = ce1.number_input("ژوور (1 تا 20)", min_value=1, max_value=20, value=int(edit_st['class_num']))
+                new_phone = ce2.text_input("ژمارەی مۆبایل", value=edit_st['phone'] if edit_st['phone'] else "")
+                new_addr = ce3.text_input("شوێنی دانیشتن", value=edit_st['address'] if edit_st['address'] else "")
+
+                col_btn1, col_btn2 = st.columns(2)
+                if col_btn1.button("💾 چاککردن و پاشەکەوتکردن"):
+                    c.execute("UPDATE students SET full_name=?, class_num=?, phone=?, address=? WHERE student_code=?", 
+                              (new_name, new_cls, new_phone, new_addr, edit_st['student_code']))
+                    conn.commit()
+                    st.success("زانیارییەکانی قوتابی بە سەرکەوتوویی دەستکاری کران!")
+                    conn.close()
+                    st.rerun()
+
+                if col_btn2.button("🗑️ سڕینەوەی ئەم قوتابییە"):
+                    c.execute("DELETE FROM students WHERE student_code=?", (edit_st['student_code'],))
+                    conn.commit()
+                    st.warning(f"قوتابی ({edit_st['full_name']}) سڕایەوە!")
+                    conn.close()
+                    st.rerun()
+            else:
+                st.info("هیچ قوتابییەک بۆ دەستکاریکردن نەدۆزرایەوە.")
+
+        with tab_st3:
+            st.write("### ➕ تۆمارکردنی قوتابیی نوێ")
+            if "auto_code" not in st.session_state:
+                st.session_state.auto_code = ""
+
+            def generate_next_code():
+                c.execute("SELECT MAX(CAST(student_code AS INTEGER)) FROM students")
+                max_code = c.fetchone()[0]
+                if max_code is None:
+                    st.session_state.auto_code = "1001"
+                else:
+                    st.session_state.auto_code = str(max_code + 1)
+
+            c1, c2 = st.columns([3, 1])
+            with c1:
+                code = st.text_input("کۆدی قوتابی", value=st.session_state.auto_code)
+            with c2:
+                st.write(" ")
+                st.write(" ")
+                if st.button("🎲 داواکردنی کۆدی نوێ"):
+                    generate_next_code()
+                    conn.close()
+                    st.rerun()
+
+            name = st.text_input("ناوی تەواوی قوتابی", key="add_name")
+            
+            c3, c4, c5 = st.columns(3)
+            cls = c3.number_input("ژوور (1 تا 20)", min_value=1, max_value=20, step=1, key="add_cls")
+            phone = c4.text_input("ژمارەی مۆبایل", key="add_phone")
+            address = c5.text_input("شوێنی دانیشتن (ناونیشان)", key="add_addr")
+
+            if st.button("💾 پاشەکەوتکردنی قوتابی"):
+                if code and name:
+                    try:
+                        c.execute("INSERT INTO students VALUES (?,?,?,?,?,?)", (code, name, "", int(cls), address, phone))
+                        conn.commit()
+                        st.success(f"قوتابی ({name}) بە سەرکەوتوویی تۆمارکرا!")
+                        st.session_state.auto_code = ""
+                        conn.close()
+                        st.rerun()
+                    except sqlite3.IntegrityError:
+                        st.error("ئەم کۆدە پێشتر بۆ قوتابییەکی تر بەکارهاتووە! کلیک لە 'داواکردنی کۆدی نوێ' بکە.")
+                else:
+                    st.error("تکایە بەلایەنی کەمەوە ناو و کۆد بنووسە.")
+
+        with tab_st4:
+            st.write("### 📋 تۆمارکردنی بەکۆمەڵ")
+            cls_bulk = st.number_input("ژوور (1 تا 20)", min_value=1, max_value=20, step=1, key="bulk_cls")
+            start_code = st.number_input("کۆدی دەستپێک", min_value=1, value=100)
+            raw_names = st.text_area("لیستی ناوەکان پەیست بکه (هر ناوێک لە دێڕێکدا):", height=150)
+
+            if st.button("تۆمارکردنی هەموویان"):
+                names_list = [n.strip() for n in raw_names.split("\n") if n.strip()]
+                cur = start_code
+                for st_name in names_list:
+                    try:
+                        c.execute("INSERT INTO students VALUES (?,?,?,?,?,?)", (str(cur), st_name, "", int(cls_bulk), "", ""))
+                        cur += 1
+                    except:
+                        cur += 1
+                conn.commit()
+                st.success("ناوەکان بە سەرکەوتوویی لە داتابەیس پاشەکەوت کران!")
+                conn.close()
+                st.rerun()
+
+    elif choice == "📂 قوتابیان بەپێی ژوورەکان (1-20)":
+        st.subheader("🏢 شیت و لیستی قوتابیان بەپێی ژوور")
+        selected_room = st.selectbox("ژوور هەڵبژێرە:", list(range(1, 21)))
+        
+        c.execute("SELECT student_code as 'کۆد', full_name as 'ناوی تەواو', phone as 'مۆبایل', address as 'شوێنی دانیشتن' FROM students WHERE class_num=?", (selected_room,))
+        room_students = c.fetchall()
+        
+        if room_students:
+            st.dataframe(pd.DataFrame(room_students), use_container_width=True)
+        else:
+            st.info("ئەم ژوورە بەتاڵە.")
+
+    elif choice == "📝 تۆمارکردن و دەستکاریکردنی نمرەی ڕۆژانە":
+        st.subheader("📝 تۆمارکردن، بینین و دەستکاریکردنی نمرەی ڕۆژانە")
+        tab1, tab2 = st.tabs(["➕ تۆمارکردنی نمرە", "✏️ مێژوو و دەستکاریکردنی نمرەکان"])
+        
+        with tab1:
+            c.execute("SELECT student_code, full_name, class_num FROM students")
+            all_st = c.fetchall()
+            if all_st:
+                st_dict = {f"{r['full_name']} (ژووری {r['class_num']})": r['student_code'] for r in all_st}
+                selected_st = st.selectbox("ناوی قوتابی هەڵبژێرە:", list(st_dict.keys()))
+                st_code = st_dict[selected_st]
+                
+                c1, c2 = st.columns(2)
+                sub_name = c1.selectbox("بابەت / وانە:", get_all_subjects())
+                term = c2.selectbox("وەرز:", [1, 2])
+                
+                c3, c4 = st.columns(2)
+                mark_date = c3.date_input("ڕێکەوتی ڕۆژانە:", datetime.now())
+                daily_mark = c4.number_input("نمرە (0 تا 20):", min_value=0.0, max_value=20.0, step=0.5)
+                
+                if st.button("پاشەکەوتکردنی نمرەی ڕۆژانە"):
+                    c.execute("INSERT INTO daily_marks (student_code, subject_name, term, mark, date) VALUES (?,?,?,?,?)",
+                              (st_code, sub_name, term, daily_mark, str(mark_date)))
+                    conn.commit()
+                    st.success("نمرەی ڕۆژانە بە سەرکەوتوویی پاشەکەوت کرا!")
+
+        with tab2:
+            st.write("### بینین و چاککردنی نمرە تۆمارکراوەکان")
+            c.execute("SELECT student_code, full_name FROM students")
+            st_map2 = {f"{r['full_name']} ({r['student_code']})": r['student_code'] for r in c.fetchall()}
+            if st_map2:
+                sel_st2 = st.selectbox("قوتابی هەڵبژێرە بۆ دەستکاریکردنی نمرەکانی:", list(st_map2.keys()))
+                code_st2 = st_map2[sel_st2]
+                
+                c.execute("SELECT id, date, subject_name, term, mark FROM daily_marks WHERE student_code=? ORDER BY date DESC", (code_st2,))
+                rows = c.fetchall()
+                if rows:
+                    for row in rows:
+                        col_a, col_b, col_c, col_d, col_e = st.columns([2, 2, 1, 2, 2])
+                        col_a.write(f"📅 **{row['date']}**")
+                        col_b.write(f"📖 {row['subject_name']} (وەرز {row['term']})")
+                        
+                        edit_m = col_c.number_input("نمرە", min_value=0.0, max_value=20.0, value=float(row['mark']), key=f"adm_edit_{row['id']}")
+                        
+                        if col_d.button("💾 چاککردن", key=f"adm_btn_save_{row['id']}"):
+                            c.execute("UPDATE daily_marks SET mark=? WHERE id=?", (edit_m, row['id']))
+                            conn.commit()
+                            st.success("نمرەکە دەستکاری کرا!")
+                            conn.close()
+                            st.rerun()
+                            
+                        if col_e.button("🗑️ سڕینەوە", key=f"adm_btn_del_{row['id']}"):
+                            c.execute("DELETE FROM daily_marks WHERE id=?", (row['id'],))
+                            conn.commit()
+                            st.warning("نمرەکە سڕایەوە!")
+                            conn.close()
+                            st.rerun()
+                else:
+                    st.info("هیچ نمرەیەکی ڕۆژانە بۆ ئەم قوتابییە نەدۆزرایەوە.")
+
+    elif choice == "⚙️ بەڕێوەبردنی وانەکان":
+        st.subheader("⚙️ بەڕێوەبردنی وانەکان")
+        all_subs = get_all_subjects()
+        st.write("**وانە چالاکەکان:** ", ", ".join(all_subs))
+        
+        c1, c2 = st.columns(2)
+        new_s = c1.text_input("وانەی نوێ:")
+        if c1.button("زیادکردن"):
+            if new_s:
+                c.execute("INSERT OR IGNORE INTO custom_subjects (subject_name) VALUES (?)", (new_s,))
+                conn.commit()
+                conn.close()
+                st.rerun()
+
+        del_s = c2.selectbox("وانە بۆ سڕینەوە:", all_subs)
+        if c2.button("سڕینەوە"):
+            c.execute("DELETE FROM custom_subjects WHERE subject_name=?", (del_s,))
+            conn.commit()
+            conn.close()
+            st.rerun()
+
+    elif choice == "👨‍🏫 تۆمارکردن و دەستکاریکردنی مامۆستایان":
+        st.subheader("👨‍🏫 بەڕێوەبردنی مامۆستایان")
+        
+        tab_t1, tab_t2, tab_t3 = st.tabs(["📜 لیستی مامۆستایان", "✏️ دەستکاریکردنی مامۆستا", "➕ تۆمارکردنی مامۆستای نوێ"])
+        
+        with tab_t1:
+            st.write("### 📜 لیستی هەموو مامۆستایان")
+            query_t = """
+                SELECT teacher_code as 'کۆد', full_name as 'ناوی تەواو', username as 'ناوی بەکارهێنەر', assigned_subjects as 'ژوور و وانەکان'
+                FROM teachers
+            """
+            df_teachers = pd.read_sql_query(query_t, conn)
+            if not df_teachers.empty:
+                st.dataframe(df_teachers, use_container_width=True)
+            else:
+                st.info("هیچ مامۆستایەک تا ئێستا تۆمار نەکراوە.")
+
+        with tab_t2:
+            st.write("### ✏️ دەستکاریکردنی زانیاریی مامۆستا (ناو، ژوور و وانەکان)")
+            c.execute("SELECT * FROM teachers")
+            t_rows = c.fetchall()
+            if t_rows:
+                t_dict = {f"{r['full_name']} (کۆد: {r['teacher_code']})": r for r in t_rows}
+                sel_t_edit = st.selectbox("مامۆستا هەڵبژێرە:", list(t_dict.keys()))
+                e_teacher = t_dict[sel_t_edit]
+
+                t_name_edit = st.text_input("ناوی تەواوی مامۆستا", value=e_teacher['full_name'])
+                t_user_edit = st.text_input("ناوی بەکارهێنەر (Username)", value=e_teacher['username'])
+                t_pass_edit = st.text_input("وشەی نهێنی نوێ", value=e_teacher['password'])
+
+                all_subs = get_all_subjects()
+                
+                parsed_t = []
+                if e_teacher['assigned_subjects']:
+                    for item in e_teacher['assigned_subjects'].split('|'):
+                        if ':' in item:
+                            cs, ss = item.split(':')
+                            parsed_t.append((int(cs.strip()), ss.strip()))
+
+                c_cls1 = parsed_t[0][0] if len(parsed_t) > 0 else 1
+                c_sub1 = parsed_t[0][1] if len(parsed_t) > 0 and parsed_t[0][1] in all_subs else all_subs[0]
+                c_cls2 = parsed_t[1][0] if len(parsed_t) > 1 else 1
+                c_sub2 = parsed_t[1][1] if len(parsed_t) > 1 and parsed_t[1][1] in all_subs else all_subs[0]
+
+                ce_col1, ce_col2 = st.columns(2)
+                edit_cls1 = ce_col1.number_input("ژووری یەکەم", min_value=1, max_value=20, value=c_cls1, key="e_cls1")
+                edit_sub1 = ce_col1.selectbox("وانەی یەکەم", all_subs, index=all_subs.index(c_sub1) if c_sub1 in all_subs else 0, key="e_sub1")
+
+                edit_cls2 = ce_col2.number_input("ژووری دووەم", min_value=1, max_value=20, value=c_cls2, key="e_cls2")
+                edit_sub2 = ce_col2.selectbox("وانەی دووەم", all_subs, index=all_subs.index(c_sub2) if c_sub2 in all_subs else 0, key="e_sub2")
+
+                btn_e1, btn_e2 = st.columns(2)
+                if btn_e1.button("💾 پاشەکەوتکردنی گۆڕانکارییەکان"):
+                    sub_str_new = f"{edit_cls1}:{edit_sub1}|{edit_cls2}:{edit_sub2}"
+                    c.execute("""UPDATE teachers SET full_name=?, username=?, password=?, assigned_classes=?, assigned_subjects=? 
+                                 WHERE teacher_code=?""", 
+                              (t_name_edit, t_user_edit, t_pass_edit, f"{edit_cls1},{edit_cls2}", sub_str_new, e_teacher['teacher_code']))
+                    conn.commit()
+                    st.success("زانیارییەکانی مامۆستا دەستکاری کران!")
+                    conn.close()
+                    st.rerun()
+
+                if btn_e2.button("🗑️ سڕینەوەی ئەم مامۆستایە"):
+                    c.execute("DELETE FROM teachers WHERE teacher_code=?", (e_teacher['teacher_code'],))
+                    conn.commit()
+                    st.warning("مامۆستاکە سڕایەوە!")
+                    conn.close()
+                    st.rerun()
+            else:
+                st.info("هیچ مامۆستایەک نییە بۆ دەستکاریکردن.")
+
+        with tab_t3:
+            c1, c2 = st.columns(2)
+            code = c1.text_input("کۆدی مامۆستا")
+            name = c2.text_input("ناوی تەواو")
+            uname = c1.text_input("ناوی بەکارهێنەر (Username)", key="new_u")
+            pwd = c2.text_input("وشەی نهێنی (Password)", type="password", key="new_p")
+
+            all_subs = get_all_subjects()
+            cls1 = c1.number_input("ژووری یەکەم", min_value=1, max_value=20)
+            sub1 = c1.selectbox("وانەی یەکەم", all_subs, key="m_sub1")
+            
+            cls2 = c2.number_input("ژووری دووەم", min_value=1, max_value=20)
+            sub2 = c2.selectbox("وانەی دووەم", all_subs, key="m_sub2")
+
+            if st.button("زیادکردنی مامۆستا"):
+                if code and name and uname and pwd:
+                    sub_str = f"{cls1}:{sub1}|{cls2}:{sub2}"
+                    c.execute("INSERT INTO teachers (teacher_code, full_name, username, password, assigned_classes, assigned_subjects) VALUES (?,?,?,?,?,?)",
+                              (code, name, uname, pwd, f"{cls1},{cls2}", sub_str))
+                    conn.commit()
+                    st.success("مامۆستا بە سەرکەوتوویی تۆمارکرا!")
+                    conn.close()
                     st.rerun()
                 else:
-                    st.error("ناوی بەکارهێنەر یان پاسوۆرد هەڵەیە!")
-        else:
-            if st.sidebar.button("دەربازبوون / Logout"):
-                st.session_state.logged_in = False
-                st.rerun()
-            admin_dashboard()
+                    st.error("تکایە هەموو بڕگەکان پڕبکەرەوە.")
 
-if __name__ == "__main__":
-    main()
+    elif choice == "📅 تۆمارکردنی غیابات و ڕاپۆرت":
+        st.subheader("📅 بەڕێوەبردنی ئامادەبوون، غیابات و مۆڵەت")
+        tab_att1, tab_att2 = st.tabs(["➕ تۆمارکردنی غیاب/مۆڵەت", "📊 ڕاپۆرتی غیابات بەپێی ژوور"])
+
+        with tab_att1:
+            st.write("### تۆمارکردنی غیابی قوتابییەکی دیاریکراو")
+            c.execute("SELECT student_code, full_name, class_num FROM students")
+            all_st_att = c.fetchall()
+            
+            if all_st_att:
+                dict_att = {f"{r['full_name']} (ژووری {r['class_num']})": r['student_code'] for r in all_st_att}
+                selected_st_att = st.selectbox("ناوی قوتابییەکە بنووسە یان هەڵبژێرە:", list(dict_att.keys()))
+                scode_att = dict_att[selected_st_att]
+                
+                ca1, ca2 = st.columns(2)
+                att_date = ca1.date_input("ڕێکەوت:", datetime.now())
+                att_status = ca2.selectbox("دۆخ:", ["نەهاتوو (غیاب)", "مۆڵەت", "هاتوو"])
+                att_notes = st.text_input("تێبینی (ئارەزوومەندانه):")
+                
+                if st.button("تۆمارکردنی دۆخی غیاب"):
+                    c.execute("INSERT INTO attendance (student_code, date, status, notes) VALUES (?,?,?,?)",
+                              (scode_att, str(att_date), att_status, att_notes))
+                    conn.commit()
+                    st.success(f"دۆخی ({att_status}) بۆ قوتابییەکە بە سەرکەوتوویی تۆمارکرا!")
+
+        with tab_att2:
+            st.write("### بینینی ڕاپۆرتی غیابات و مۆڵەت")
+            col_r1, col_r2 = st.columns(2)
+            search_room = col_r1.number_input("ژوور هەڵبژێرە (1 تا 20):", min_value=1, max_value=20, value=1)
+            filter_status = col_r2.selectbox("فلتەر بەپێی دۆخ:", ["هەمووی", "نەهاتوو (غیاب)", "مۆڵەت", "هاتوو"])
+            
+            query_att = """
+                SELECT a.date as 'ڕێکەوت', s.full_name as 'ناوی قوتابی', s.class_num as 'ژوور', a.status as 'دۆخ', a.notes as 'تێبینی'
+                FROM attendance a
+                JOIN students s ON a.student_code = s.student_code
+                WHERE s.class_num = ?
+            """
+            params = [search_room]
+            if filter_status != "هەمووی":
+                query_att += " AND a.status = ?"
+                params.append(filter_status)
+                
+            query_att += " ORDER BY a.date DESC"
+            
+            df_att_report = pd.read_sql_query(query_att, conn, params=params)
+            if not df_att_report.empty:
+                st.dataframe(df_att_report, use_container_width=True)
+            else:
+                st.info("هیچ داتایەک بۆ ئەم ژوورە نەدۆزرایەوە.")
+
+    elif choice == "💯 نمرەی تاقیکردنەوە (30)":
+        st.subheader("💯 نمرەی تاقیکردنەوە (30)")
+        c.execute("SELECT student_code, full_name FROM students")
+        st_map = {f"{r['full_name']} ({r['student_code']})": r['student_code'] for r in c.fetchall()}
+        
+        if st_map:
+            s_select = st.selectbox("قوتابی", list(st_map.keys()))
+            scode = st_map[s_select]
+            sub = st.selectbox("وانە", get_all_subjects())
+            term = st.selectbox("وەرز", [1, 2])
+            score = st.number_input("نمرە (0-30)", min_value=0.0, max_value=30.0, step=0.5)
+            
+            if st.button("پاشەکەوت"):
+                c.execute("INSERT OR REPLACE INTO exam_marks (student_code, subject_name, term, exam_score) VALUES (?,?,?,?)",
+                          (scode, sub, term, score))
+                conn.commit()
+                st.success("نمرە تۆمارکرا!")
+
+    elif choice == "📄 کارتی A4 و ڕاپۆرت":
+        st.subheader("📄 کارتی ڕاپۆرتی قوتابی (A4)")
+        c.execute("SELECT * FROM students")
+        st_rows = c.fetchall()
+        if st_rows:
+            st_dict = {f"{s['full_name']} (ژووری {s['class_num']})": s for s in st_rows}
+            s_choice = st.selectbox("قوتابی هەڵبژێرە", list(st_dict.keys()))
+            s_data = st_dict[s_choice]
+            
+            df_g = get_student_grades_df(s_data['student_code'], conn)
+            
+            st.markdown(f"""
+            <div class="card-box">
+                <h3 style="text-align: center; color: #10b981;">📖 سیستەمی بنکەی قورئان - کارتی نمرە</h3>
+                <hr>
+                <p><b>ناوی قوتابی:</b> {s_data['full_name']} | <b>کۆد:</b> {s_data['student_code']} | <b>ژوور:</b> {s_data['class_num']} | <b>شوێنی دانیشتن:</b> {s_data['address'] if s_data['address'] else 'دیاری نەکراوە'}</p>
+                <hr>
+            </div>
+            """, unsafe_allow_html=True)
+            st.dataframe(df_g, use_container_width=True)
+
+            def generate_a4_pdf():
+                buffer = io.BytesIO()
+                doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
+                elements = []
+                styles = getSampleStyleSheet()
+
+                title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontSize=18, alignment=1, spaceAfter=15)
+                elements.append(Paragraph("<b>Quran Center - Student Report Card</b>", title_style))
+                elements.append(Spacer(1, 10))
+
+                info_data = [
+                    ["Student Name", str(s_data['full_name'])],
+                    ["Student Code", str(s_data['student_code'])],
+                    ["Class / Room", str(s_data['class_num'])],
+                    ["Address", str(s_data['address'] if s_data['address'] else '-')]
+                ]
+                t_info = Table(info_data, colWidths=[150, 300])
+                t_info.setStyle(TableStyle([
+                    ('BACKGROUND', (0,0), (0,-1), colors.whitesmoke),
+                    ('GRID', (0,0), (-1,-1), 1, colors.grey),
+                    ('PADDING', (0,0), (-1,-1), 6),
+                ]))
+                elements.append(t_info)
+                elements.append(Spacer(1, 15))
+
+                if not df_g.empty:
+                    table_data = [["Subject", "Term", "Daily (20)", "Exam (30)", "Total (50)"]]
+                    for _, r in df_g.iterrows():
+                        table_data.append([str(r['وانە / بابەت']), str(r['وەرز']), str(r['کۆی ڕۆژانە (20)']), str(r['تاقیکردنەوە (30)']), str(r['کۆی گشتی (50)'])])
+                    
+                    t_marks = Table(table_data, colWidths=[130, 60, 80, 80, 80])
+                    t_marks.setStyle(TableStyle([
+                        ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
+                        ('GRID', (0,0), (-1,-1), 1, colors.black),
+                        ('ALIGN', (1,0), (-1,-1), 'CENTER'),
+                        ('PADDING', (0,0), (-1,-1), 6),
+                    ]))
+                    elements.append(t_marks)
+
+                doc.build(elements)
+                buffer.seek(0)
+                return buffer
+
+            pdf_file = generate_a4_pdf()
+            st.download_button(
+                label="📥 ڕاکێشانی کارتی A4 بە فۆرماتی (PDF)",
+                data=pdf_file,
+                file_name=f"Report_{s_data['student_code']}.pdf",
+                mime="application/pdf"
+            )
+
+    conn.close()
+
+# 5. دەستەی مامۆستا (Teacher Dashboard)
+def teacher_dashboard():
+    t_info = st.session_state.user_info
+    st.title(f"👨‍🏫 بەخێربێیت مامۆستا {t_info['full_name']}")
+    
+    if st.button("🚪 دەرچوون"):
+        st.session_state.logged_in = False
+        st.rerun()
+
+    raw_subs = t_info.get('assigned_subjects', '')
+    parsed = []
+    if raw_subs:
+        for item in raw_subs.split('|'):
+            if ':' in item:
+                c_str, s_str = item.split(':')
+                parsed.append((int(c_str.strip()), s_str.strip()))
+
+    if not parsed:
+        st.warning("هیچ پۆل یان وانەیەک بۆ تۆ لەلایەن بەڕێوەبەرەوە دیاری نەکراوە!")
+        return
+
+    st.markdown("---")
+    
+    t_menu = ["📝 تۆمارکردنی نمرەی ڕۆژانە", "✏️ بینین و چاککردنی نمرەی ڕۆژانە", "📂 قوتابیانی پۆلەکەم", "📅 تۆمارکردنی غیابات"]
+    t_choice = st.radio("دیاری کردنی بەش:", t_menu, horizontal=True)
+
+    opts = [f"ژووری {c_num} - وانەی: {s_num}" for c_num, s_num in parsed]
+    sel = st.selectbox("پۆل و وانەی دیاریکراو هەڵبژێرە:", opts)
+    idx = opts.index(sel)
+    target_cls, target_sub = parsed[idx]
+
+    conn = get_db_connection()
+    c = conn.cursor()
+
+    if t_choice == "📝 تۆمارکردنی نمرەی ڕۆژانە":
+        st.subheader(f"📝 تۆمارکردنی نمرەی ڕۆژانە بۆ (ژووری {target_cls} - {target_sub})")
+        
+        m_date = st.date_input("ڕێکەوت:", datetime.now())
+        term = st.selectbox("وەرز", [1, 2])
+
+        c.execute("SELECT student_code, full_name FROM students WHERE class_num=?", (target_cls,))
+        st_in_cls = c.fetchall()
+
+        if st_in_cls:
+            marks = {}
+            for r in st_in_cls:
+                c1, c2 = st.columns([2, 2])
+                c1.write(f"👤 **{r['full_name']}**")
+                marks[r['student_code']] = c2.number_input("نمرەی ئەمڕۆ", min_value=0.0, max_value=20.0, step=0.5, key=f"tm_{r['student_code']}")
+            
+            if st.button("پاشەکەوتکردنی نمرەکان"):
+                for scode, smark in marks.items():
+                    c.execute("INSERT INTO daily_marks (student_code, subject_name, term, mark, date) VALUES (?,?,?,?,?)",
+                              (scode, target_sub, term, smark, str(m_date)))
+                conn.commit()
+                st.success("نمرەکان بە سەرکەوتوویی پاشەکەوت کران!")
+        else:
+            st.info("هیچ قوتابییەک لەم ژوورەدا نییە.")
+
+    elif t_choice == "✏️ بینین و چاککردنی نمرەی ڕۆژانە":
+        st.subheader(f"🔍 بینین و چاککردنی نمرە تۆمارکراوەکان (ژووری {target_cls} - {target_sub})")
+        
+        c.execute("SELECT student_code, full_name FROM students WHERE class_num=?", (target_cls,))
+        st_in_cls = c.fetchall()
+        
+        if st_in_cls:
+            st_dict = {f"{r['full_name']}": r['student_code'] for r in st_in_cls}
+            sel_st = st.selectbox("قوتابی هەڵبژێرە:", list(st_dict.keys()))
+            scode = st_dict[sel_st]
+            
+            c.execute("SELECT id, date, term, mark FROM daily_marks WHERE student_code=? AND subject_name=? ORDER BY date DESC", (scode, target_sub))
+            m_list = c.fetchall()
+            
+            if m_list:
+                for row in m_list:
+                    c1, c2, c3, c4 = st.columns([2, 1, 2, 2])
+                    c1.write(f"📅 **{row['date']}** (وەرز {row['term']})")
+                    new_val = c2.number_input("نمرە", min_value=0.0, max_value=20.0, value=float(row['mark']), key=f"m_edit_{row['id']}")
+                    
+                    if c3.button("💾 چاککردن", key=f"btn_save_{row['id']}"):
+                        c.execute("UPDATE daily_marks SET mark=? WHERE id=?", (new_val, row['id']))
+                        conn.commit()
+                        st.success("نمرەکە نوێکرایەوە!")
+                        conn.close()
+                        st.rerun()
+                        
+                    if c4.button("🗑️ سڕینەوە", key=f"btn_del_{row['id']}"):
+                        c.execute("DELETE FROM daily_marks WHERE id=?", (row['id'],))
+                        conn.commit()
+                        st.warning("نمرەکە سڕایەوە!")
+                        conn.close()
+                        st.rerun()
+            else:
+                st.info("هیچ نمرەیەکی ڕۆژانە بۆ ئەم قوتابییە تۆمار نەکراوە.")
+
+    elif t_choice == "📂 قوتابیانی پۆلەکەم":
+        st.subheader(f"👥 لیستی قوتابیانی ژووری ({target_cls})")
+        students_df = pd.read_sql_query(f"SELECT student_code as 'کۆدی قوتابی', full_name as 'ناوی قوتابی', phone as 'مۆبایل', address as 'شوێنی دانیشتن' FROM students WHERE class_num={target_cls}", conn)
+        if not students_df.empty:
+            st.dataframe(students_df, use_container_width=True)
+        else:
+            st.info("هیچ قوتابییەک لەم ژوورەدا نەدۆزرایەوە.")
+
+    elif t_choice == "📅 تۆمارکردنی غیابات":
+        st.subheader(f"📅 تۆمارکردنی غیابات بۆ قوتابیانی (ژووری {target_cls})")
+        
+        c.execute("SELECT student_code, full_name FROM students WHERE class_num=?", (target_cls,))
+        students_list = c.fetchall()
+        
+        if students_list:
+            st_dict = {r['full_name']: r['student_code'] for r in students_list}
+            sel_st = st.selectbox("قوتابی هەڵبژێرە:", list(st_dict.keys()))
+            scode = st_dict[sel_st]
+            
+            ca1, ca2 = st.columns(2)
+            att_date = ca1.date_input("ڕێکەوت:", datetime.now(), key="t_att_date")
+            att_status = ca2.selectbox("دۆخ:", ["نەهاتوو (غیاب)", "مۆڵەت", "هاتوو"], key="t_att_status")
+            att_notes = st.text_input("تێبینی:", key="t_att_notes")
+            
+            if st.button("پاشەکەوتکردنی غیاب"):
+                c.execute("INSERT INTO attendance (student_code, date, status, notes) VALUES (?,?,?,?)",
+                          (scode, str(att_date), att_status, att_notes))
+                conn.commit()
+                st.success("غیابات بە سەرکەوتوویی تۆمارکرا!")
+
+    conn.close()
+
+# 6. ڕاڕەوی سەرەکی
+if not st.session_state.logged_in:
+    login_page()
+else:
+    if st.session_state.role == "Admin":
+        admin_dashboard()
+    else:
+        teacher_dashboard()
