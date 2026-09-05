@@ -13,10 +13,10 @@ from reportlab.lib.pagesizes import A4
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.styles import ParagraphStyle
 
 # ==========================================
-# 1. پێناسکردنی فۆنت و نەخشەکانی PDF
+# 1. بەشی دروستکردنی ڕاپۆرتی PDF (بە فۆنتی ڕاستکراوە)
 # ==========================================
 FONT_PATH = "NotoNaskhArabic-Regular.ttf"
 FONT_NAME = "KurdishFont"
@@ -142,53 +142,43 @@ def generate_a4_pdf(s_data, df_g):
 
 
 # ==========================================
-# 2. نەخشی بەرهەمهێنانی فایلی Excel
+# 2. بەشی دابەزاندنی ئەکسل (بەبێ تێکچوونی داتابەیس)
 # ==========================================
 def export_all_data_to_excel(conn):
     output = io.BytesIO()
     
-    df_students = pd.read_sql_query("""
-        SELECT student_code AS 'کۆدی قوتابی', full_name AS 'ناوی تەواو', 
-               class_num AS 'ژوور', phone AS 'مۆبایل', address AS 'ناونیشان'
-        FROM students ORDER BY class_num, student_code
-    """, conn)
-    
-    df_daily = pd.read_sql_query("""
-        SELECT d.student_code AS 'کۆدی قوتابی', s.full_name AS 'ناوی قوتابی', s.class_num AS 'ژوور',
-               d.subject_name AS 'بابەت', d.term AS 'وەرز', d.mark AS 'نمرە', d.date AS 'ڕێکەوت'
-        FROM daily_marks d
-        JOIN students s ON d.student_code = s.student_code
-        ORDER BY d.date DESC
-    """, conn)
-    
-    df_exam = pd.read_sql_query("""
-        SELECT e.student_code AS 'کۆدی قوتابی', s.full_name AS 'ناوی قوتابی', s.class_num AS 'ژوور',
-               e.subject_name AS 'بابەت', e.term AS 'وەرز', e.exam_score AS 'نمرەی تاقیکردنەوە'
-        FROM exam_marks e
-        JOIN students s ON e.student_code = s.student_code
-        ORDER BY s.class_num, e.student_code
-    """, conn)
+    def safe_read_sql(query, conn):
+        try:
+            return pd.read_sql_query(query, conn)
+        except Exception:
+            return pd.DataFrame()
 
-    df_attendance = pd.read_sql_query("""
-        SELECT a.student_code AS 'کۆدی قوتابی', s.full_name AS 'ناوی قوتابی', s.class_num AS 'ژوور',
-               a.date AS 'ڕێکەوت', a.status AS 'دۆخ', a.notes AS 'تێبینی'
-        FROM attendance a
-        JOIN students s ON a.student_code = s.student_code
-        ORDER BY a.date DESC
-    """, conn)
+    df_students = safe_read_sql("SELECT * FROM students", conn)
+    df_daily = safe_read_sql("SELECT * FROM daily_marks", conn)
+    df_exam = safe_read_sql("SELECT * FROM exam_marks", conn)
+    df_attendance = safe_read_sql("SELECT * FROM attendance", conn)
 
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df_students.to_excel(writer, sheet_name='لیستی قوتابیان', index=False)
-        df_daily.to_excel(writer, sheet_name='نمرەی ڕۆژانە', index=False)
-        df_exam.to_excel(writer, sheet_name='نمرەی تاقیکردنەوە', index=False)
-        df_attendance.to_excel(writer, sheet_name='غیابات و مۆڵەت', index=False)
+        if not df_students.empty:
+            df_students.to_excel(writer, sheet_name='لیستی قوتابیان', index=False)
+        else:
+            pd.DataFrame({'پەیام': ['هیچ زانیارییەک نییە']}).to_excel(writer, sheet_name='لیستی قوتابیان', index=False)
+            
+        if not df_daily.empty:
+            df_daily.to_excel(writer, sheet_name='نمرەی ڕۆژانە', index=False)
+            
+        if not df_exam.empty:
+            df_exam.to_excel(writer, sheet_name='نمرەی تاقیکردنەوە', index=False)
+            
+        if not df_attendance.empty:
+            df_attendance.to_excel(writer, sheet_name='غیابات', index=False)
 
     output.seek(0)
     return output
 
 
 # ==========================================
-# 3. بنکەدراوە و ڕووکاری Streamlit
+# 3. بەشی کارپێکردنی بەرنامەکە (Streamlit)
 # ==========================================
 conn = sqlite3.connect("quran_center.db", check_same_thread=False)
 
@@ -196,7 +186,7 @@ def admin_dashboard():
     st.title("👨‍💼 داشبۆردی بەڕێوەبەر")
     
     st.subheader("🔎 گەڕانی خێرا و بینینی زانیاری قوتابی")
-    search_term = st.text_input("ناوی قوتابی یاخود کۆد بنووسە:")
+    st.text_input("ناوی قوتابی یاخود کۆد بنووسە:")
     
     st.markdown("---")
     st.subheader("📥 دابەزاندنی تەواوی زانیارییەکانی سیستەم")
