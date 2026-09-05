@@ -880,7 +880,7 @@ else:
         admin_dashboard()
     else:
         teacher_dashboard()
-pip install openpyxl
+        
 import pandas as pd
 import io
 
@@ -942,4 +942,10 @@ st.download_button(
     file_name=f"Quran_Center_Data_{datetime.now().strftime('%Y_%m_%d')}.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 )
+streamlit
+pandas
+openpyxl
+arabic-reshaper
+python-bidi
+reportlab
 
