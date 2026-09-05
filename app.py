@@ -16,7 +16,7 @@ from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, Tabl
 from reportlab.lib.styles import ParagraphStyle
 
 # ==========================================
-# 1. بەشی دروستکردنی ڕاپۆرتی PDF (بە فۆنتی ڕاستکراوە)
+# 1. بەشی دروستکردنی ڕاپۆرتی PDF
 # ==========================================
 FONT_PATH = "NotoNaskhArabic-Regular.ttf"
 FONT_NAME = "KurdishFont"
@@ -50,31 +50,16 @@ def generate_a4_pdf(s_data, df_g):
     elements = []
     
     title_style = ParagraphStyle(
-        'ArabicTitle',
-        fontName=FONT_NAME,
-        fontSize=20,
-        leading=24,
-        textColor=PRIMARY_COLOR,
-        alignment=1,
-        spaceAfter=15
+        'ArabicTitle', fontName=FONT_NAME, fontSize=20, leading=24,
+        textColor=PRIMARY_COLOR, alignment=1, spaceAfter=15
     )
-    
     header_style = ParagraphStyle(
-        'ArabicHeader',
-        fontName=FONT_NAME,
-        fontSize=11,
-        leading=14,
-        textColor=colors.white,
-        alignment=1
+        'ArabicHeader', fontName=FONT_NAME, fontSize=11, leading=14,
+        textColor=colors.white, alignment=1
     )
-    
     cell_style = ParagraphStyle(
-        'ArabicCell',
-        fontName=FONT_NAME,
-        fontSize=10,
-        leading=13,
-        textColor=TEXT_COLOR,
-        alignment=1
+        'ArabicCell', fontName=FONT_NAME, fontSize=10, leading=13,
+        textColor=TEXT_COLOR, alignment=1
     )
 
     elements.append(Paragraph(reshape_txt("📖 بنکەی قورئانی پیرۆز - کارتی ئەنجامی قوتابی"), title_style))
@@ -140,9 +125,8 @@ def generate_a4_pdf(s_data, df_g):
     buffer.seek(0)
     return buffer
 
-
 # ==========================================
-# 2. بەشی دابەزاندنی ئەکسل (بەبێ تێکچوونی داتابەیس)
+# 2. بەشی دروستکردنی فایلی Excel
 # ==========================================
 def export_all_data_to_excel(conn):
     output = io.BytesIO()
@@ -176,11 +160,17 @@ def export_all_data_to_excel(conn):
     output.seek(0)
     return output
 
-
 # ==========================================
-# 3. بەشی کارپێکردنی بەرنامەکە (Streamlit)
+# 3. پەیوەندی بە داتابەیس و بەڕێوەبردنی ڕووکار
 # ==========================================
 conn = sqlite3.connect("quran_center.db", check_same_thread=False)
+
+def student_view():
+    st.title("🎓 بەشی قوتابیان و ئەنجامەکان")
+    st.subheader("🔎 گەڕان بەدوای نمرەی قوتابی")
+    code_input = st.text_input("کۆدی قوتابی بنووسە:")
+    if code_input:
+        st.info(f"ئەنجامەکانی کۆدی: {code_input}")
 
 def admin_dashboard():
     st.title("👨‍💼 داشبۆردی بەڕێوەبەر")
@@ -201,7 +191,39 @@ def admin_dashboard():
     )
 
 def main():
-    admin_dashboard()
+    st.sidebar.title("📌 مێنیوی سەرەکی")
+    
+    # دروستکردنی بژاردە لە سایدبار
+    menu_choice = st.sidebar.radio(
+        "بەشێک هەڵبژێرە:",
+        ["🎓 بەشی قوتابیان", "🔐 چوونەژوورەوەی بەڕێوەبەر"]
+    )
+
+    if menu_choice == "🎓 بەشی قوتابیان":
+        student_view()
+
+    elif menu_choice == "🔐 چوونەژوورەوەی بەڕێوەبەر":
+        if "logged_in" not in st.session_state:
+            st.session_state.logged_in = False
+
+        if not st.session_state.logged_in:
+            st.subheader("🔑 چوونەژوورەوەی بەڕێوەبەر")
+            username = st.text_input("ناوی بەکارهێنەر:")
+            password = st.text_input("وێنەی نهێنی (Password):", type="password")
+            
+            if st.button("چوونەژوورەوە"):
+                # دەتوانیت ناوی بەکارهێنەر و پاسوۆرد لێرە دەستکاری بکەیت
+                if username == "admin" and password == "1234":
+                    st.session_state.logged_in = True
+                    st.success("بە سەرکەوتوویی چوویته ژوورەوە!")
+                    st.rerun()
+                else:
+                    st.error("ناوی بەکارهێنەر یان پاسوۆرد هەڵەیە!")
+        else:
+            if st.sidebar.button("دەربازبوون / Logout"):
+                st.session_state.logged_in = False
+                st.rerun()
+            admin_dashboard()
 
 if __name__ == "__main__":
     main()
